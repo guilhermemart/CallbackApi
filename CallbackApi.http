@@ -1,0 +1,6 @@
+@CallbackApi_HostAddress = http://localhost:5153
+
+GET {{CallbackApi_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
