@@ -8,7 +8,7 @@
 
   <PropertyGroup>
     <!-- Define a versão do .NET utilizada (neste caso, .NET 10). -->
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <!-- Ativa verificações para evitar erros de referência nula. -->
     <Nullable>enable</Nullable>
     <!-- Permite usar bibliotecas comuns sem precisar de muitos "using" no topo dos arquivos. -->

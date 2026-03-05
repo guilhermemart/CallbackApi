@@ -37,3 +37,5 @@ app.MapControllers();
 
 // Inicia o servidor e começa a ouvir requisições.
 app.Run();
+
+public partial class Program { }
