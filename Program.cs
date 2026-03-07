@@ -32,6 +32,7 @@ if (app.Environment.IsDevelopment())
 // Redireciona a raiz (/) para o endpoint de logs para facilitar o teste.
 app.MapGet("/", () => Results.Redirect("/v1/log"));
 
+app.UseExceptionHandler("/error");
 // Mapeia os Controllers para que o ASP.NET saiba quais classes usar para cada rota.
 app.MapControllers();
 

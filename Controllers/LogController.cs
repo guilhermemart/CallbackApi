@@ -12,7 +12,7 @@ namespace CallbackApi.Controllers;
 // [ApiController] indica que esta classe serve para responder requisições HTTP (API).
 // [Route] define a URL base para este controller (ex: http://localhost/v1/log).
 [ApiController]
-[Route("v1/log")]
+[Route("v1/[controller]")]
 public class LogController : ControllerBase
 {
     private readonly LogService _logService;
@@ -29,14 +29,14 @@ public class LogController : ControllerBase
     public IActionResult Receive([FromBody] LogInput input)
     {
         // Garante que temos valores mesmo se vierem vazios.
-        var timestamp = input.Timestamp?.ToString("o") ?? "unknown";
-        var source = input.Source ?? "unknown";
+        input.Timestamp = input.Timestamp ?? DateTime.UtcNow;
+        var timestampString = input.Timestamp.Value.ToString("o");
 
         // Chama o serviço para processar a lógica de negócio (salvar o log).
-        _logService.ProcessLog(input.Log, source, timestamp);
+        _logService.ProcessLog(input.Log, input.Source, timestampString);
 
         // Retorna um status 201 (Created) com uma mensagem de sucesso.
-        return Created(string.Empty, new
+        return Created("/v1/log", new
         {
             action = $"Log received {DateTime.UtcNow:o}",
             callback = input

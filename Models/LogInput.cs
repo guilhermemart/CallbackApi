@@ -16,5 +16,6 @@ public class LogInput
     // O '?' indica que este campo é opcional (pode ser nulo).
     public DateTime? Timestamp { get; set; }
 
-    public string? Source { get; set; }
+    [Required]
+    public string Source { get; set; } = string.Empty;
 }
