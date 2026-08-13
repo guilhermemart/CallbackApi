@@ -1,0 +1,9 @@
+# Use the official PostgreSQL image as a parent image
+FROM postgres:17
+
+
+# Copy init script to set max_connections and other optimizations
+# This script runs automatically on first initialization (when volume is empty)
+# Uses ALTER SYSTEM which creates postgresql.auto.conf (has priority over postgresql.conf)
+# IMPORTANTE: Só executa se o volume estiver vazio (primeira inicialização)
+COPY docker/postgresql/init-max-connections.sql /docker-entrypoint-initdb.d/

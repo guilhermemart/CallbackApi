@@ -1,3 +1,6 @@
+// Em Cs, muito provavelmente cada view precisa de um controller
+// e cada controller tem uma classe que herda de ControllerBase ou Controller.
+// O código fornecido é um exemplo de um controller de erro em uma aplicação ASP.NET Core.
 using Microsoft.AspNetCore.Mvc;
 
 namespace CallbackApi.Controllers;

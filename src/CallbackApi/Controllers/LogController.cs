@@ -28,18 +28,19 @@ public class LogController : ControllerBase
     [HttpPost]
     public IActionResult Receive([FromBody] LogInput input)
     {
-        // Garante que temos valores mesmo se vierem vazios.
-        input.Timestamp = input.Timestamp ?? DateTime.UtcNow;
-        var timestampString = input.Timestamp.Value.ToString("o");
+        var timestamp = input.Timestamp ?? DateTime.UtcNow;
+        var id = Guid.NewGuid();
 
-        // Chama o serviço para processar a lógica de negócio (salvar o log).
-        _logService.ProcessLog(input.Log, input.Source, timestampString);
-
-        // Retorna um status 201 (Created) com uma mensagem de sucesso.
-        return Created("/v1/log", new
+        var result = new
         {
-            action = $"Log received {DateTime.UtcNow:o}",
-            callback = input
-        });
+            id,
+            input.Log,
+            input.Source,
+            Timestamp = timestamp
+        };
+
+        _logService.ProcessLog(result.Log, result.Source, result.Timestamp.ToString("o"));
+
+        return Created($"/v1/log/{id}", result);
     }
 }
