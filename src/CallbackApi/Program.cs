@@ -11,8 +11,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Adiciona o suporte para Controllers (peças que lidam com as rotas/URLs).
 builder.Services.AddControllers();
 
-// Dependency Injection (DI): Registra o LogService como um Singleton (uma única instância para toda a app).
+// Dependency Injection (DI): Registra o <View>Service como um Singleton (uma única instância para toda a app).
 builder.Services.AddSingleton<LogService>();
+builder.Services.AddSingleton<EventService>();
 
 // Configuração do Swagger para gerar documentação automática da API.
 builder.Services.AddEndpointsApiExplorer();
