@@ -6,4 +6,4 @@ FROM postgres:17
 # This script runs automatically on first initialization (when volume is empty)
 # Uses ALTER SYSTEM which creates postgresql.auto.conf (has priority over postgresql.conf)
 # IMPORTANTE: Só executa se o volume estiver vazio (primeira inicialização)
-COPY docker/postgresql/init-max-connections.sql /docker-entrypoint-initdb.d/
+COPY init-max-connections.sql /docker-entrypoint-initdb.d/

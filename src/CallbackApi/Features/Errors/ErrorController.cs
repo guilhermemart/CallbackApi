@@ -3,7 +3,7 @@
 // O código fornecido é um exemplo de um controller de erro em uma aplicação ASP.NET Core.
 using Microsoft.AspNetCore.Mvc;
 
-namespace CallbackApi.Controllers;
+namespace CallbackApi.Features.Errors;
 
 [ApiController]
 public class ErrorController : ControllerBase

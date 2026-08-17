@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace CallbackApi.Models;
+namespace CallbackApi.Features.Events;
 
 // DTO que representa o envelope genérico recebido de sistemas externos.
 public class EventInput

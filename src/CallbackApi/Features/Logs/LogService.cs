@@ -4,7 +4,7 @@
  */
 using Microsoft.Extensions.Logging;
 
-namespace CallbackApi.Services;
+namespace CallbackApi.Features.Logs;
 
 // Serviços contêm a "lógica de negócio" da aplicação, mantendo os Controllers limpos.
 public class LogService

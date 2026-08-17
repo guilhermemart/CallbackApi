@@ -4,10 +4,8 @@
  * É a ponte entre a internet e a lógica do sistema.
  */
 using Microsoft.AspNetCore.Mvc;
-using CallbackApi.Models;
-using CallbackApi.Services;
 
-namespace CallbackApi.Controllers;
+namespace CallbackApi.Features.Logs;
 
 // [ApiController] indica que esta classe serve para responder requisições HTTP (API).
 // [Route] define a URL base para este controller (ex: http://localhost/v1/log).

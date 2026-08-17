@@ -2,132 +2,154 @@
 
 ## Objetivo
 
-O projeto é uma API intermediária para receber eventos de sistemas de
-segurança/CFTV, processá-los e disponibilizá-los para consulta em uma
-interface web. A integração real com equipamentos Intelbras, a persistência
-em banco de dados e o frontend ainda não estão implementados.
+O CallbackApi recebe callbacks/eventos de equipamentos ou sistemas CFTV, valida um contrato genérico e disponibiliza os eventos para consulta futura por um frontend. A API foi implementada em C# com ASP.NET Core; não utiliza FastAPI ou Python.
 
-Além do objetivo funcional, o projeto serve para praticar desenvolvimento de
-APIs backend com ASP.NET Core: organização por responsabilidades, validação de
-entrada, injeção de dependência, logging e testes automatizados.
+O contrato é genérico porque há múltiplas origens de eventos. O conteúdo específico de cada fabricante é preservado no campo `payload`.
 
-## Tecnologia e estrutura
-
-A implementação atual usa **C# com ASP.NET Core**, direcionada ao **.NET 10**.
-Não utiliza Python, FastAPI ou Pydantic.
+## Estrutura atual
 
 ```text
 CallbackApi/
 ├── CallbackApi.slnx
-├── src/
-│   └── CallbackApi/
-│       ├── Controllers/
-│       ├── Middleware/
-│       ├── Models/
-│       ├── Services/
-│       ├── Program.cs
-│       └── CallbackApi.csproj
-├── tests/
-│   └── CallbackApi.Tests/
+├── src/CallbackApi/
+│   ├── Features/
+│   │   ├── Errors/
+│   │   ├── Events/
+│   │   │   └── Models/
+│   │   ├── Health/
+│   │   └── Logs/
+│   ├── Infrastructure/
+│   │   ├── Persistence/
+│   │   └── Redis/
+│   ├── Program.cs
+│   └── CallbackApi.csproj
+├── tests/CallbackApi.Tests/
+├── docker/
+│   ├── postgresql/
+│   └── redis/
 └── documents/
 ```
 
-A solução inclui a API e o projeto de testes.
+`Features` agrupa cada domínio da API. `Infrastructure` concentra as integrações com Redis e PostgreSQL.
 
-## Endpoints existentes
-
-| Método | Rota | Comportamento atual |
-| --- | --- | --- |
-| `GET` | `/v1/health` | Retorna `200 OK` com o estado `ok` e o nome do serviço. |
-| `POST` | `/v1/log` | Recebe um log, registra a informação e retorna `201 Created`. |
-| Vários | `/error` | Retorna uma resposta `500` no formato Problem Details para exceções não tratadas. |
-
-A rota `GET /` redireciona para `/v1/log`. Como `/v1/log` aceita somente
-`POST`, esse redirecionamento não é adequado para uma requisição feita pelo
-navegador.
-
-## Entrada de logs
-
-O endpoint `POST /v1/log` recebe um JSON que é desserializado no modelo
-`LogInput`:
-
-```json
-{
-  "log": "Erro ao conectar ao banco de dados",
-  "timestamp": "2024-01-15T10:30:00Z",
-  "source": "database_service"
-}
-```
-
-Os campos `log` e `source` são obrigatórios. `timestamp` é opcional; quando
-não é informado, a API utiliza o horário UTC atual. O endpoint gera um
-identificador (`Guid`) para a resposta e retorna os dados processados.
-
-## Processamento e logging
-
-O `LogController` delega o processamento ao `LogService`, registrado como
-singleton por injeção de dependência. Atualmente, o serviço registra uma
-mensagem estruturada por meio de `ILogger<LogService>` contendo origem,
-horário e texto do log.
-
-Não há configuração explícita de gravação em arquivo, rotação de arquivos de
-log ou persistência de eventos no código atual.
-
-## Fluxo pretendido
+## Fluxo atual de eventos
 
 ```text
 Intelbras / sistema CFTV
           |
           | callback / evento
           v
-    ASP.NET Core API
+     ASP.NET Core API
           |
-          | valida evento
+          | valida EventInput
           v
-     processa evento
+     EventService
+          |
+          +--> Redis: estado atual do evento
+          |
+          +--> Redis Stream: fila de persistência
+                                  |
+                                  v
+                         PostgresSnapshotWorker
+                                  |
+                                  v
+                             PostgreSQL
           |
           v
-    Banco de dados
+    GET /v1/events/list
           |
           v
- Frontend React ou Vue
+   Frontend futuro (React ou Vue)
 ```
 
-O frontend deverá consultar os eventos por endpoints da API. A atualização em
-tempo real poderá ser adicionada posteriormente por SignalR ou outro mecanismo
-compatível.
+O Redis possui dois papéis:
 
-## Pipeline HTTP
+- `callback:events` é o Stream usado como fila para o worker de snapshot.
+- `callback:event-operations` é o Stream com operações assíncronas de exclusão.
+- `callback:event:{id}` mantém o estado atual e consultável de cada evento.
+- `callback:events:index` mantém os IDs ordenados pelo horário de recebimento, usados pela listagem.
 
-O arquivo `Program.cs` configura:
+## Contrato de entrada
 
-1. controllers;
-2. injeção de dependência para `LogService`;
-3. Swagger/OpenAPI;
-4. middleware global de exceções em `/error`;
-5. mapeamento dos controllers.
+O endpoint de inclusão recebe um `EventInput`:
 
-Swagger é habilitado somente no ambiente de desenvolvimento.
+```json
+{
+  "event_type": "door_opened",
+  "payload": {
+    "source": ["camera-01"],
+    "source_id": "front-door",
+    "data": {
+      "message": "door opened"
+    }
+  }
+}
+```
 
-## Testes existentes
+`payload` é um objeto JSON. No modelo C#, ele é preservado como texto JSON para ser armazenado no PostgreSQL como `jsonb` e no Redis sem depender do formato de um fabricante.
 
-O projeto `tests/CallbackApi.Tests` usa xUnit e
-`Microsoft.AspNetCore.Mvc.Testing`. Há um teste de integração que confirma que
-`GET /v1/health` retorna `200 OK`.
+Cada evento também possui os campos internos `id`, `received_at`, `updated_at` e `deleted_at`.
 
-## Próximas evoluções
+## Endpoints existentes
 
-1. Definir os contratos reais de callback da Intelbras ou do sistema CFTV de
-   origem.
-2. Criar modelos específicos para os eventos recebidos e normalizá-los para um
-   formato interno.
-3. Implementar a persistência dos eventos em banco de dados.
-4. Adicionar autenticação ou validação de assinatura para callbacks, conforme
-   os mecanismos oferecidos pelo sistema de origem.
-5. Corrigir o redirecionamento de `GET /` para uma rota que aceite `GET`, como
-   `/v1/health`.
-6. Criar endpoints para listar e consultar os eventos persistidos.
-7. Criar um frontend em React ou Vue para visualizar os eventos.
-8. Criar testes para `POST /v1/log`, validação de payloads e persistência.
-9. Definir idempotência e estratégia de reprocessamento para callbacks
-   duplicados ou que falhem.
+| Método | Rota | Comportamento |
+| --- | --- | --- |
+| `GET` | `/v1/health` | Retorna o estado da API. |
+| `POST` | `/v1/log` | Recebe e registra um log. |
+| `POST` | `/v1/event/save` | Cria um evento sem ID no corpo e enfileira a persistência. Retorna `202 Accepted`. |
+| `POST` | `/v1/event/update/{id}` | Reescreve `event_type` e `payload` de um evento existente, define `deleted_at` como `null` e enfileira a atualização do PostgreSQL. Retorna `202 Accepted`. |
+| `GET` | `/v1/event/get/{id}` | Retorna o evento do Redis; se não estiver no Redis, consulta PostgreSQL, preenche o Redis e retorna o registro. |
+| `GET` | `/v1/events/list` | Retorna até 100 eventos ativos a partir do estado no Redis. |
+| `PATCH` | `/v1/events/softdelete/{id}` | Atualiza o estado no Redis e enfileira a exclusão lógica. Retorna `202 Accepted`. |
+| `DELETE` | `/v1/events/delete/{id}` | Remove o estado Redis e enfileira a remoção no PostgreSQL. Retorna `202 Accepted`. |
+| Vários | `/error` | Retorna Problem Details para exceções não tratadas. |
+
+## Persistência e exclusão lógica
+
+O `PostgresSnapshotWorker` consome eventos e operações dos Redis Streams e aplica as alterações na tabela `events` do PostgreSQL. A tabela contém:
+
+- `id`;
+- `event_type`;
+- `payload` (`jsonb`);
+- `received_at`;
+- `updated_at`;
+- `deleted_at` (nulo enquanto o evento está ativo).
+
+No soft delete, a API usa um único horário UTC atual para:
+
+1. atualizar `deleted_at` dentro do `payload` guardado no estado Redis;
+2. definir o `DeletedAt` do estado Redis, para que `GET /v1/events/list` não retorne o evento;
+3. publicar uma operação para o worker definir `events.deleted_at` e `events.updated_at` no PostgreSQL.
+
+Se `payload.deleted_at` já existir, ele é substituído pelo horário do soft delete. O `payload` original persistido no PostgreSQL não é alterado por esse endpoint; a coluna `events.deleted_at` é a referência de exclusão lógica no banco.
+
+No delete definitivo, a API remove primeiro o estado e o índice Redis e publica a operação de remoção. Quando o worker posteriormente lê a mensagem original de criação, ele consulta o estado Redis: se o estado não existir, reconhece a mensagem sem recriar o registro no PostgreSQL.
+
+`GET /v1/event/get/{id}` consulta primeiro o Redis. Quando encontra o estado, publica uma operação de sincronização; o worker reescreve o PostgreSQL somente se `updated_at` for diferente. Quando o Redis não possui o estado, a API consulta o PostgreSQL e repopula o Redis. Um marcador Redis de delete definitivo impede que um registro ainda pendente de remoção no PostgreSQL seja repopulado durante esse intervalo.
+
+## Configuração da aplicação
+
+`Program.cs` registra:
+
+1. controllers e Swagger em desenvolvimento;
+2. `LogService` como singleton;
+3. `EventService` como scoped;
+4. a conexão Redis e `RedisEventStream`;
+5. `CallbackDbContext` com o provider Npgsql;
+6. `PostgresSnapshotWorker` como serviço em segundo plano;
+7. middleware global de exceções em `/error`.
+
+As connection strings de desenvolvimento para Redis e PostgreSQL ficam em `appsettings.Development.json`.
+
+## Estado de verificação
+
+O projeto compila e os testes atuais passam. A execução integrada requer Redis e PostgreSQL acessíveis pelas connection strings configuradas e as migrations aplicadas ao banco.
+
+## Próximos passos
+
+1. Aplicar e validar as migrations do PostgreSQL no ambiente local.
+2. Criar testes de integração para inclusão, listagem, soft delete e delete.
+3. Definir autenticação ou assinatura de callbacks por origem.
+4. Definir idempotência para callbacks duplicados.
+5. Criar filtros e paginação para a listagem de eventos.
+6. Criar o frontend React ou Vue para o grid de eventos.

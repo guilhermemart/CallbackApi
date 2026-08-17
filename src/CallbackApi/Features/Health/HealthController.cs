@@ -4,7 +4,7 @@
  */
 using Microsoft.AspNetCore.Mvc;
 
-namespace CallbackApi.Controllers;
+namespace CallbackApi.Features.Health;
 
 [ApiController]
 [Route("v1/health")]

@@ -3,7 +3,12 @@
  * UTILIDADE: Configura o servidor web, registra serviços (Injeção de Dependência) 
  * e define o pipeline de como as requisições HTTP são processadas.
  */
-using CallbackApi.Services;
+using CallbackApi.Features.Events;
+using CallbackApi.Features.Logs;
+using CallbackApi.Infrastructure.Persistence;
+using CallbackApi.Infrastructure.Redis;
+using Microsoft.EntityFrameworkCore;
+using StackExchange.Redis;
 
 // O ponto de entrada da aplicação, onde configuramos o servidor e os serviços.
 var builder = WebApplication.CreateBuilder(args);
@@ -13,7 +18,15 @@ builder.Services.AddControllers();
 
 // Dependency Injection (DI): Registra o <View>Service como um Singleton (uma única instância para toda a app).
 builder.Services.AddSingleton<LogService>();
-builder.Services.AddSingleton<EventService>();
+builder.Services.AddScoped<EventService>();
+builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
+    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")
+        ?? throw new InvalidOperationException("Connection string 'Redis' is required.")));
+builder.Services.AddSingleton<RedisEventStream>();
+builder.Services.AddDbContext<CallbackDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Postgres")
+        ?? throw new InvalidOperationException("Connection string 'Postgres' is required.")));
+builder.Services.AddHostedService<PostgresSnapshotWorker>();
 
 // Configuração do Swagger para gerar documentação automática da API.
 builder.Services.AddEndpointsApiExplorer();
