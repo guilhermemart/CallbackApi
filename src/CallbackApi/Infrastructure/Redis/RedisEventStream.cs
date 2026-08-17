@@ -59,6 +59,12 @@ public class RedisEventStream(IConnectionMultiplexer connection)
         return await _database.KeyExistsAsync(GetEventDeletedKey(id));
     }
 
+    public async Task RemoveHardDeleteMarkerAsync(Guid id, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await _database.KeyDeleteAsync(GetEventDeletedKey(id));
+    }
+
     public async Task QueueSoftDeleteAsync(Event @event, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

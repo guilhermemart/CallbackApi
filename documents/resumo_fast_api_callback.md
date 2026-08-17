@@ -125,7 +125,7 @@ Se `payload.deleted_at` já existir, ele é substituído pelo horário do soft d
 
 No delete definitivo, a API remove primeiro o estado e o índice Redis e publica a operação de remoção. Quando o worker posteriormente lê a mensagem original de criação, ele consulta o estado Redis: se o estado não existir, reconhece a mensagem sem recriar o registro no PostgreSQL.
 
-`GET /v1/event/get/{id}` consulta primeiro o Redis. Quando encontra o estado, publica uma operação de sincronização; o worker reescreve o PostgreSQL somente se `updated_at` for diferente. Quando o Redis não possui o estado, a API consulta o PostgreSQL e repopula o Redis. Um marcador Redis de delete definitivo impede que um registro ainda pendente de remoção no PostgreSQL seja repopulado durante esse intervalo.
+`GET /v1/event/get/{id}` consulta primeiro o Redis. Quando encontra o estado, publica uma operação de sincronização; o worker reescreve o PostgreSQL somente se `updated_at` for diferente. Quando o Redis não possui o estado, a API consulta o PostgreSQL e repopula o Redis. Um marcador Redis de delete definitivo impede que um registro ainda pendente de remoção no PostgreSQL seja repopulado durante esse intervalo. O worker remove esse marcador após concluir a operação de delete no PostgreSQL.
 
 ## Configuração da aplicação
 

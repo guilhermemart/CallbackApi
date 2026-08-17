@@ -165,6 +165,8 @@ public class PostgresSnapshotWorker(
                 database.Events.Remove(persistedEvent);
                 await database.SaveChangesAsync(cancellationToken);
             }
+
+            await eventStream.RemoveHardDeleteMarkerAsync(eventId, cancellationToken);
         }
         else
         {
