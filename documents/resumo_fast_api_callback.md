@@ -145,6 +145,8 @@ As connection strings de desenvolvimento para Redis e PostgreSQL ficam em `appse
 
 O projeto compila e os testes atuais passam. A execução integrada requer Redis e PostgreSQL acessíveis pelas connection strings configuradas e as migrations aplicadas ao banco.
 
+O teste `Features/Events/Tests/EventLifecycleTests.cs` cria instâncias temporárias de Redis e PostgreSQL com Testcontainers e valida o fluxo save, update, soft delete, restauração e delete definitivo.
+
 ## Próximos passos
 
 1. Aplicar e validar as migrations do PostgreSQL no ambiente local.
