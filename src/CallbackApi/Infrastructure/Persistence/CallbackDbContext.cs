@@ -21,8 +21,8 @@ public class CallbackDbContext(DbContextOptions<CallbackDbContext> options) : Db
             .HasColumnName("payload")
             .HasColumnType("jsonb")
             .IsRequired();
-        entity.Property(eventItem => eventItem.ReceivedAt)
-            .HasColumnName("received_at")
+        entity.Property(eventItem => eventItem.CreatedAt)
+            .HasColumnName("created_at")
             .IsRequired();
         entity.Property(eventItem => eventItem.UpdatedAt)
             .HasColumnName("updated_at")

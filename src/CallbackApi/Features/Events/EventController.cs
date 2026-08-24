@@ -23,7 +23,7 @@ public class EventController : ControllerBase
             id = @event.Id,
             event_type = @event.EventType,
             payload = input.Payload,
-            received_at = @event.ReceivedAt,
+            created_at = @event.CreatedAt,
             updated_at = @event.UpdatedAt,
             deleted_at = @event.DeletedAt,
             status = "queued"

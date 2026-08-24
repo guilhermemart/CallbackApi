@@ -10,7 +10,7 @@ public class Event
     // JSON original do callback, preservado sem depender do fabricante.
     public string Payload { get; set; } = string.Empty;
 
-    public DateTime ReceivedAt { get; set; }
+    public DateTime CreatedAt { get; set; }
 
     public DateTime UpdatedAt { get; set; }
 

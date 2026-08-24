@@ -110,6 +110,7 @@ public class PostgresSnapshotWorker(
 
             if (persistedEvent is not null && persistedEvent.DeletedAt is null)
             {
+                persistedEvent.Payload = deletedEvent.Payload;
                 persistedEvent.DeletedAt = deletedEvent.DeletedAt;
                 persistedEvent.UpdatedAt = deletedEvent.UpdatedAt;
                 await database.SaveChangesAsync(cancellationToken);

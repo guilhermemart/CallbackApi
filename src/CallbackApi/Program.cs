@@ -4,7 +4,6 @@
  * e define o pipeline de como as requisições HTTP são processadas.
  */
 using CallbackApi.Features.Events;
-using CallbackApi.Features.Logs;
 using CallbackApi.Infrastructure.Persistence;
 using CallbackApi.Infrastructure.Redis;
 using Microsoft.EntityFrameworkCore;
@@ -17,7 +16,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 
 // Dependency Injection (DI): Registra o <View>Service como um Singleton (uma única instância para toda a app).
-builder.Services.AddSingleton<LogService>();
 builder.Services.AddScoped<EventService>();
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")
@@ -43,8 +41,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// Redireciona a raiz (/) para o endpoint de logs para facilitar o teste.
-app.MapGet("/", () => Results.Redirect("/v1/log"));
+app.MapGet("/", () => Results.Redirect("/v1/health"));
 
 app.UseExceptionHandler("/error");
 // Mapeia os Controllers para que o ASP.NET saiba quais classes usar para cada rota.

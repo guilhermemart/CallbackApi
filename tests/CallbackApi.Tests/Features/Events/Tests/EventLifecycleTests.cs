@@ -59,7 +59,11 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
         Assert.DoesNotContain(eventId.ToString(), listContent);
 
         await AssertEventuallyAsync(async () =>
-            (await GetPersistedEventAsync(eventId))?.DeletedAt is not null);
+        {
+            var persistedEvent = await GetPersistedEventAsync(eventId);
+            return persistedEvent?.DeletedAt is not null
+                && GetPayloadProperty(persistedEvent.Payload, "deleted_by") == "system_action";
+        });
 
         var restoreResponse = await _client.PostAsync($"/v1/event/update/{eventId}", CreateEventContent("restored"));
         Assert.Equal(HttpStatusCode.Accepted, restoreResponse.StatusCode);
@@ -67,7 +71,10 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
         await AssertEventuallyAsync(async () =>
         {
             var persistedEvent = await GetPersistedEventAsync(eventId);
-            return persistedEvent?.EventType == "restored" && persistedEvent.DeletedAt is null;
+            return persistedEvent?.EventType == "restored"
+                && persistedEvent.DeletedAt is null
+                && GetPayloadProperty(persistedEvent.Payload, "deleted_at") is null
+                && GetPayloadProperty(persistedEvent.Payload, "deleted_by") is null;
         });
 
         var deleteResponse = await _client.DeleteAsync($"/v1/events/delete/{eventId}");
@@ -79,6 +86,18 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
         await AssertEventuallyAsync(async () => await GetPersistedEventAsync(eventId) is null);
     }
 
+    [Fact]
+    public async Task Readiness_Returns_OK_When_Postgres_Is_Available()
+    {
+        var response = await _client.GetAsync("/v1/health/ready");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("ok", document.RootElement.GetProperty("database").GetString());
+        Assert.Equal("ok", document.RootElement.GetProperty("redis").GetString());
+    }
+
     private static StringContent CreateEventContent(string eventType)
     {
         var content = $$"""
@@ -86,9 +105,12 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
           "event_type": "{{eventType}}",
           "payload": {
             "source": ["xunit"],
+            "source_id": "xunit-event",
             "data": {
               "message": "{{eventType}} event"
-            }
+            },
+            "created_at": "2026-08-21T12:00:00Z",
+            "created_by": "xunit"
           }
         }
         """;
@@ -108,7 +130,7 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
         await connection.OpenAsync();
 
         await using var command = new NpgsqlCommand(
-            "SELECT event_type, deleted_at FROM events WHERE \"Id\" = @id",
+            "SELECT event_type, deleted_at, payload FROM events WHERE \"Id\" = @id",
             connection);
         command.Parameters.AddWithValue("id", id);
 
@@ -120,7 +142,17 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
 
         return new PersistedEvent(
             reader.GetString(0),
-            reader.IsDBNull(1) ? null : reader.GetDateTime(1));
+            reader.IsDBNull(1) ? null : reader.GetDateTime(1),
+            reader.GetString(2));
+    }
+
+    private static string? GetPayloadProperty(string payload, string propertyName)
+    {
+        using var document = JsonDocument.Parse(payload);
+        return document.RootElement.TryGetProperty(propertyName, out var value)
+            && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
     }
 
     private static async Task AssertEventuallyAsync(Func<Task<bool>> condition)
@@ -140,5 +172,5 @@ public class EventLifecycleTests(EventIntegrationFixture fixture) : IClassFixtur
         Assert.Fail("The asynchronous operation did not complete within 15 seconds.");
     }
 
-    private sealed record PersistedEvent(string EventType, DateTime? DeletedAt);
+    private sealed record PersistedEvent(string EventType, DateTime? DeletedAt, string Payload);
 }

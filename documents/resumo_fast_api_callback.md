@@ -17,7 +17,6 @@ CallbackApi/
 │   │   ├── Events/
 │   │   │   └── Models/
 │   │   ├── Health/
-│   │   └── Logs/
 │   ├── Infrastructure/
 │   │   ├── Persistence/
 │   │   └── Redis/
@@ -88,14 +87,14 @@ O endpoint de inclusão recebe um `EventInput`:
 
 `payload` é um objeto JSON. No modelo C#, ele é preservado como texto JSON para ser armazenado no PostgreSQL como `jsonb` e no Redis sem depender do formato de um fabricante.
 
-Cada evento também possui os campos internos `id`, `received_at`, `updated_at` e `deleted_at`.
+Cada evento também possui os campos internos `id`, `created_at`, `updated_at` e `deleted_at`.
 
 ## Endpoints existentes
 
 | Método | Rota | Comportamento |
 | --- | --- | --- |
 | `GET` | `/v1/health` | Retorna o estado da API. |
-| `POST` | `/v1/log` | Recebe e registra um log. |
+| `GET` | `/v1/health/ready` | Executa `SELECT 1` no PostgreSQL e `PING` no Redis; retorna `200` quando ambos estão acessíveis, caso contrário retorna `503`. |
 | `POST` | `/v1/event/save` | Cria um evento sem ID no corpo e enfileira a persistência. Retorna `202 Accepted`. |
 | `POST` | `/v1/event/update/{id}` | Reescreve `event_type` e `payload` de um evento existente, define `deleted_at` como `null` e enfileira a atualização do PostgreSQL. Retorna `202 Accepted`. |
 | `GET` | `/v1/event/get/{id}` | Retorna o evento do Redis; se não estiver no Redis, consulta PostgreSQL, preenche o Redis e retorna o registro. |
@@ -111,17 +110,18 @@ O `PostgresSnapshotWorker` consome eventos e operações dos Redis Streams e apl
 - `id`;
 - `event_type`;
 - `payload` (`jsonb`);
-- `received_at`;
+- `created_at`;
 - `updated_at`;
 - `deleted_at` (nulo enquanto o evento está ativo).
 
-No soft delete, a API usa um único horário UTC atual para:
+No soft delete, a API usa um único horário UTC atual e o valor temporário
+`"system_action"` para `deleted_by` enquanto não existe autenticação, para:
 
-1. atualizar `deleted_at` dentro do `payload` guardado no estado Redis;
+1. atualizar `deleted_at` e `deleted_by` dentro do `payload` guardado no estado Redis;
 2. definir o `DeletedAt` do estado Redis, para que `GET /v1/events/list` não retorne o evento;
 3. publicar uma operação para o worker definir `events.deleted_at` e `events.updated_at` no PostgreSQL.
 
-Se `payload.deleted_at` já existir, ele é substituído pelo horário do soft delete. O `payload` original persistido no PostgreSQL não é alterado por esse endpoint; a coluna `events.deleted_at` é a referência de exclusão lógica no banco.
+Se `payload.deleted_at` já existir, ele é substituído pelo horário do soft delete. O payload atualizado também é persistido no PostgreSQL, e a coluna `events.deleted_at` continua sendo a referência de exclusão lógica no banco.
 
 No delete definitivo, a API remove primeiro o estado e o índice Redis e publica a operação de remoção. Quando o worker posteriormente lê a mensagem original de criação, ele consulta o estado Redis: se o estado não existir, reconhece a mensagem sem recriar o registro no PostgreSQL.
 
@@ -132,12 +132,11 @@ No delete definitivo, a API remove primeiro o estado e o índice Redis e publica
 `Program.cs` registra:
 
 1. controllers e Swagger em desenvolvimento;
-2. `LogService` como singleton;
-3. `EventService` como scoped;
-4. a conexão Redis e `RedisEventStream`;
-5. `CallbackDbContext` com o provider Npgsql;
-6. `PostgresSnapshotWorker` como serviço em segundo plano;
-7. middleware global de exceções em `/error`.
+2. `EventService` como scoped;
+3. a conexão Redis e `RedisEventStream`;
+4. `CallbackDbContext` com o provider Npgsql;
+5. `PostgresSnapshotWorker` como serviço em segundo plano;
+6. middleware global de exceções em `/error`.
 
 As connection strings de desenvolvimento para Redis e PostgreSQL ficam em `appsettings.Development.json`.
 

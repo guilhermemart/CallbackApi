@@ -50,7 +50,7 @@ public class RedisEventStream(IConnectionMultiplexer connection)
         await _database.SortedSetAddAsync(
             EventIndexKey,
             @event.Id.ToString(),
-            @event.ReceivedAt.ToUniversalTime().Subtract(DateTime.UnixEpoch).TotalMilliseconds);
+            @event.CreatedAt.ToUniversalTime().Subtract(DateTime.UnixEpoch).TotalMilliseconds);
     }
 
     public async Task<bool> IsHardDeletedAsync(Guid id, CancellationToken cancellationToken)

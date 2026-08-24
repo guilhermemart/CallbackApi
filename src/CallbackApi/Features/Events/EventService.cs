@@ -9,6 +9,7 @@ namespace CallbackApi.Features.Events;
 
 public class EventService
 {
+    private const string DefaultDeletedBy = "system_action";
     private readonly RedisEventStream _eventStream;
     private readonly CallbackDbContext _database;
     private readonly ILogger<EventService> _logger;
@@ -44,7 +45,7 @@ public class EventService
                 Id = Guid.NewGuid(),
                 EventType = input.EventType,
                 Payload = input.Payload.GetRawText(),
-                ReceivedAt = now,
+                CreatedAt = input.GetCreatedAt(),
                 UpdatedAt = now,
                 DeletedAt = null
             };
@@ -52,10 +53,10 @@ public class EventService
             await _eventStream.EnqueueAsync(newEvent, cancellationToken);
 
             _logger.LogInformation(
-                "event_queued id={eventId} event_type={eventType} received_at={receivedAt}",
+                "event_queued id={eventId} event_type={eventType} created_at={createdAt}",
                 newEvent.Id,
                 newEvent.EventType,
-                newEvent.ReceivedAt);
+                newEvent.CreatedAt);
 
             return newEvent;
         }
@@ -73,6 +74,7 @@ public class EventService
         }
 
         payload["deleted_at"] = null;
+        payload["deleted_by"] = null;
         redisEvent.EventType = input.EventType;
         redisEvent.Payload = payload.ToJsonString();
         redisEvent.UpdatedAt = DateTime.UtcNow;
@@ -131,6 +133,7 @@ public class EventService
         }
 
         payload["deleted_at"] = now;
+        payload["deleted_by"] = DefaultDeletedBy;
 
         redisEvent.Payload = payload.ToJsonString();
         redisEvent.DeletedAt = now;

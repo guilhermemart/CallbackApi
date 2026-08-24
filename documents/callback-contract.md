@@ -9,18 +9,21 @@ preservado como JSON para aceitar dados específicos de equipamentos diferentes.
   "payload": {
     "source": ["equipamento-x"],
     "source_id": "equipment-x_id",
+    "created_at": "2026-08-13T12:00:00Z",
+    "created_by": "user_id",
+    "deleted_at": null,
+    "deleted_by": null,
     "data": {
       "evento_original": "movimento",
       "dados_do_fabricante": {}
-    },
-    "created_at": "2026-08-13T12:00:00Z",
-    "created_by": "user_id",
-    "deleted_at": "2026-08-13T12:00:00Z",
-    "deleted_by": "user_id"
+    }
   }
 }
 ```
 
 Campos obrigatórios definidos neste contrato: `event_type`, `payload`,
-`payload.source`, `payload.source_id`, `payload.data`, `payload.created_at`,
-`payload.created_by`, `payload.deleted_at` e `payload.deleted_by`.
+`payload.source`, `payload.source_id`, `payload.data`, `payload.created_at` e
+`payload.created_by`. Em eventos ativos, `payload.deleted_at` e
+`payload.deleted_by` podem ser nulos. Na exclusão lógica, a API preenche
+`payload.deleted_at` com o horário UTC e `payload.deleted_by` com `"system_action"`
+enquanto não existe autenticação.
