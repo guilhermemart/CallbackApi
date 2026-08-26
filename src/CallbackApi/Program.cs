@@ -33,6 +33,14 @@ builder.Services.AddSwaggerGen();
 // Constrói a aplicação com as configurações acima.
 var app = builder.Build();
 
+if (args.Contains("--migrate", StringComparer.OrdinalIgnoreCase))
+{
+    using var scope = app.Services.CreateScope();
+    var database = scope.ServiceProvider.GetRequiredService<CallbackDbContext>();
+    await database.Database.MigrateAsync();
+    return;
+}
+
 // Configura o "Pipeline de Requisição" (Middleware).
 if (app.Environment.IsDevelopment())
 {

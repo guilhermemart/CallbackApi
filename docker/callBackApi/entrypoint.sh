@@ -6,6 +6,12 @@ postgres_host="${POSTGRES_HOST:-}"
 postgres_port="${POSTGRES_PORT:-5432}"
 wait_timeout_seconds="${POSTGRES_WAIT_TIMEOUT_SECONDS:-60}"
 
+# O Kubernetes injeta POSTGRES_PORT=tcp://<ip>:5432 quando existe um Service
+# chamado postgres. O entrypoint aceita apenas uma porta numÃ©rica.
+if [[ ! "$postgres_port" =~ ^[0-9]+$ ]]; then
+  postgres_port=5432
+fi
+
 if [[ -z "$postgres_host" && -n "$postgres_connection_string" ]]; then
   postgres_host="$(printf '%s' "$postgres_connection_string" | tr ';' '\n' | sed -n 's/^[Hh]ost=//p' | head -n 1)"
 fi

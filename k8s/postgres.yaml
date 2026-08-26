@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: callbackapi-postgres
+  namespace: callbackapi
+type: Opaque
+stringData:
+  POSTGRES_DB: callbackdb
+  POSTGRES_USER: callback
+  POSTGRES_PASSWORD: callbackpass
+  POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+  ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=callbackdb;Username=callback;Password=callbackpass
+  ConnectionStrings__Redis: redis:6379,abortConnect=false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-hba
+  namespace: callbackapi
+data:
+  pg_hba.conf: |
+    local all all trust
+    host all all 0.0.0.0/0 scram-sha-256
+    host all all ::0/0 scram-sha-256
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: callbackapi
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: callbackapi
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          args: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: callbackapi-postgres
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: hba
+              mountPath: /etc/postgresql
+              readOnly: true
+      volumes:
+        - name: hba
+          configMap:
+            name: postgres-hba
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

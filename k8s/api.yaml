@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: callback-api
+  namespace: callbackapi
+spec:
+  selector:
+    app: callback-api
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: callback-api
+  namespace: callbackapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: callback-api
+  template:
+    metadata:
+      labels:
+        app: callback-api
+    spec:
+      initContainers:
+        - name: wait-migrations
+          image: postgres:17-alpine
+          envFrom:
+            - secretRef:
+                name: callbackapi-postgres
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: callbackapi-postgres
+                  key: POSTGRES_PASSWORD
+          command:
+            - sh
+            - -c
+            - >-
+              until psql -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc
+              'SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '\''20260822023617_RenameReceivedAtToCreatedAt'\''' |
+              grep -qx 1; do echo 'Waiting for migrations...'; sleep 2; done
+      containers:
+        - name: callback-api
+          image: callback-api:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: callbackapi-postgres
+          readinessProbe:
+            httpGet:
+              path: /v1/health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /v1/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
