@@ -42,8 +42,8 @@ spec:
             - -c
             - >-
               until psql -h postgres -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc
-              'SELECT 1 FROM "__EFMigrationsHistory" WHERE "MigrationId" = '\''20260822023617_RenameReceivedAtToCreatedAt'\''' |
-              grep -qx 1; do echo 'Waiting for migrations...'; sleep 2; done
+              "SELECT to_regclass('public.events') IS NOT NULL" | grep -qx t;
+              do echo 'Waiting for migrations...'; sleep 2; done
       containers:
         - name: callback-api
           image: callback-api:local

@@ -1,21 +1,14 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
+COPY go.mod ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/callback-api .
 
-COPY ["src/CallbackApi/CallbackApi.csproj", "src/CallbackApi/"]
-RUN dotnet restore "src/CallbackApi/CallbackApi.csproj"
-
-COPY src/CallbackApi/ src/CallbackApi/
-WORKDIR /src/src/CallbackApi
-RUN dotnet publish "CallbackApi.csproj" --configuration Release --output /app/publish --no-restore
-
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
 WORKDIR /app
-
-ENV ASPNETCORE_URLS=http://+:8080
+ENV HTTP_ADDRESS=:8080
 EXPOSE 8080
-
-COPY --from=build /app/publish .
-COPY --chmod=755 docker/callBackApi/entrypoint.sh /app/entrypoint.sh
-
-ENTRYPOINT ["/app/entrypoint.sh"]
-CMD ["dotnet", "CallbackApi.dll"]
+COPY --from=build /out/callback-api /app/callback-api
+ENTRYPOINT ["/app/callback-api"]

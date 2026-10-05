@@ -1,24 +1,24 @@
-# Arquitetura do CallbackApi
+# CallbackApi architecture
 
-O CallbackApi é uma API ASP.NET Core para receber e consultar eventos de
-callback. O contrato de entrada está em `callback-contract.md`.
+CallbackApi is a Go HTTP API for receiving and querying callback events. The
+input contract is documented in `callback-contract.md`.
 
-## Componentes
+## Components
 
-- `Features/Events`: endpoints e regra de negócio de eventos.
-- `Features/Health`: liveness (`GET /v1/health`) e readiness com leitura no
-  PostgreSQL e `PING` no Redis (`GET /v1/health/ready`).
-- `Features/Errors`: resposta padronizada para exceções não tratadas.
-- `Infrastructure/Redis`: estado atual e streams de operação.
-- `Infrastructure/Persistence`: contexto EF Core, migrations e worker de
-  persistência no PostgreSQL.
+- `main.go` starts the HTTP server and provides liveness and readiness checks.
+- `event.go` validates event requests, manages current state in Redis, and runs
+  the PostgreSQL snapshot worker.
+- `--migrate` creates the PostgreSQL `events` table.
 
-## Fluxo de eventos
+## Event flow
 
-1. A API valida `EventInput` e grava o estado atual no Redis.
-2. O evento ou a operação é publicada em um Redis Stream.
-3. `PostgresSnapshotWorker` consome o stream e aplica a alteração no
+1. The API validates an event and stores its current state in Redis.
+2. It writes the event or requested operation to a Redis stream.
+3. A background worker consumes both streams and applies snapshots to
    PostgreSQL.
 
-O endpoint de criação confirma o recebimento depois que o evento é colocado
-no Redis; a persistência no PostgreSQL ocorre de forma assíncrona.
+The save endpoint returns after writing to Redis. PostgreSQL persistence is
+asynchronous. Set `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_USER`,
+`POSTGRES_PASSWORD`, and `POSTGRES_DB` for PostgreSQL. Redis uses
+`REDIS_ADDRESS` and optional `REDIS_PASSWORD`; the server listens on
+`HTTP_ADDRESS` (default `:8080`).
