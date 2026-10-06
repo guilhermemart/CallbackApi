@@ -1,6 +1,0 @@
-@CallbackApi_HostAddress = http://localhost:5153
-
-GET {{CallbackApi_HostAddress}}/v1/health
-Accept: application/json
-
-###

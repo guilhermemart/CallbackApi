@@ -1,8 +1,0 @@
-<Solution>
-  <Folder Name="/src/">
-    <Project Path="src/CallbackApi/CallbackApi.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/CallbackApi.Tests/CallbackApi.Tests.csproj" />
-  </Folder>
-</Solution>

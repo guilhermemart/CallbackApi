@@ -1,115 +1,78 @@
-# Redis AOF e snapshot PostgreSQL
+# Redis e snapshots PostgreSQL
 
 ## Fluxo
 
 ```text
-POST /v1/event
-      |
-      v
-Redis Stream (AOF)
-      |
-      v
-PostgresSnapshotWorker
-      |
-      v
-PostgreSQL.events
+POST /v1/event/save
+        |
+        v
+  Estado e stream Redis
+        |
+        v
+ Worker Go da API
+        |
+        v
+ PostgreSQL.events
 ```
 
-O endpoint confirma a requisição somente depois que o evento entra no Redis
-Stream. O worker grava o evento no PostgreSQL e confirma a mensagem no Redis
-somente após a gravação terminar.
+A API responde depois de gravar o evento no Redis. Um worker consome os streams
+e aplica as gravações e operações no PostgreSQL.
 
-Cada evento usa um `Id` único como chave primária no PostgreSQL. Se o worker
-falhar depois de salvar o evento e antes de confirmar a mensagem no Redis, a
-próxima tentativa encontra o mesmo `Id` e não insere uma duplicata.
+## Subir a infraestrutura e a API com Docker
 
-Esse fluxo oferece processamento pelo menos uma vez e persistência idempotente
-no PostgreSQL. Ele não substitui backups do PostgreSQL.
-
-## Subir a infraestrutura local
-
-Com Docker Desktop em execução, crie os containers na primeira execução:
+Execute os comandos a partir da raiz do repositório, com o Docker Desktop em
+execução. Crie a rede e os volumes uma vez:
 
 ```powershell
-docker build -t callback-postgres .\docker\postgresql
-docker run -d --name callback-postgres `
-  -e POSTGRES_DB=callbackdb `
-  -e POSTGRES_USER=callback `
-  -e POSTGRES_PASSWORD=callbackpass `
-  -p 5432:5432 `
-  -v postgres_data:/var/lib/postgresql/data `
-  callback-postgres
+docker network create callbackapi-net
+docker volume create callbackapi-postgres-data
+docker volume create callbackapi-redis-data
 ```
+
+Compile as imagens:
 
 ```powershell
-docker build -t callback-redis .\docker\redis
-docker run -d --name callback-redis `
-  -p 6379:6379 `
-  -v callback_redis_data:/data `
-  callback-redis
+docker build -t callback-api:local -f .\docker\callBackApi\Dockerfile .
+docker build -t callback-postgres:local -f .\docker\postgresql\dockerfile .\docker\postgresql
+docker build -t callback-redis:local -f .\docker\redis\Dockerfile .\docker\redis
 ```
 
-Nas execuções seguintes, inicie os containers existentes:
+Inicie PostgreSQL e Redis:
 
 ```powershell
-docker start callback-postgres callback-redis
+docker run -d --name callback-postgres --network callbackapi-net --network-alias postgres `
+  --restart unless-stopped -e POSTGRES_DB=callbackdb -e POSTGRES_USER=callback `
+  -e POSTGRES_PASSWORD=callbackpass -e POSTGRES_HOST_AUTH_METHOD=scram-sha-256 `
+  -p 127.0.0.1:5432:5432 -v callbackapi-postgres-data:/var/lib/postgresql/data `
+  callback-postgres:local
+
+docker run -d --name callback-redis --network callbackapi-net --network-alias redis `
+  --restart unless-stopped -p 127.0.0.1:6379:6379 `
+  -v callbackapi-redis-data:/data callback-redis:local
 ```
 
-Depois de os dois containers estarem em execução, aplique ou confirme as migrations:
+Depois de PostgreSQL aceitar conexões, aplique as migrations com Tern:
 
 ```powershell
-.\.tools\dotnet-ef.exe database update `
-  --project .\src\CallbackApi\CallbackApi.csproj `
-  --startup-project .\src\CallbackApi\CallbackApi.csproj
+docker run --rm --network callbackapi-net --entrypoint tern `
+  -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 `
+  -e POSTGRES_USER=callback -e POSTGRES_PASSWORD=callbackpass `
+  -e POSTGRES_DB=callbackdb callback-api:local migrate --migrations /app/migrations
 ```
 
-Inicie a API no perfil HTTP de desenvolvimento:
+Inicie a API:
 
 ```powershell
-dotnet run --project .\src\CallbackApi\CallbackApi.csproj --launch-profile http
+docker run -d --name callback-api --network callbackapi-net `
+  --restart unless-stopped -e HTTP_ADDRESS=:8080 `
+  -e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 `
+  -e POSTGRES_USER=callback -e POSTGRES_PASSWORD=callbackpass `
+  -e POSTGRES_DB=callbackdb -e REDIS_ADDRESS=redis:6379 `
+  -p 127.0.0.1:8080:8080 callback-api:local
 ```
 
-A API fica disponível em `http://localhost:5153`. Em outro terminal, verifique a
-inicialização:
+A API fica disponível em `http://localhost:8080`. Verifique a API e suas
+dependências em `http://localhost:8080/v1/health/ready`.
 
-```powershell
-Invoke-RestMethod http://localhost:5153/v1/health
-```
-
-Para verificar as conexões com PostgreSQL e Redis, use o readiness check:
-
-```powershell
-Invoke-RestMethod http://localhost:5153/v1/health/ready
-```
-
-No ambiente `Development`, o Swagger está disponível em
-`http://localhost:5153/swagger`.
-
-## Executar a API em Docker
-
-Crie a imagem a partir da raiz do repositório:
-
-```powershell
-docker build -f .\docker\callBackApi\Dockerfile -t callback-api .
-```
-
-Com Redis e PostgreSQL publicados nas portas locais padrão, execute:
-
-```powershell
-docker run --rm --name callback-api -p 8080:8080 `
-  -e ConnectionStrings__Postgres="Host=host.docker.internal;Port=5432;Database=callbackdb;Username=callback;Password=callbackpass" `
-  -e ConnectionStrings__Redis="host.docker.internal:6379,abortConnect=false" `
-  callback-api
-```
-
-A API fica disponível em `http://localhost:8080`. O uso de
-`host.docker.internal` permite que o container acesse a infraestrutura Docker
-publicada no host durante o desenvolvimento local.
-
-O entrypoint da imagem aguarda o PostgreSQL aceitar conexões TCP antes de
-iniciar a API. O tempo máximo padrão é 60 segundos e pode ser alterado com
-`POSTGRES_WAIT_TIMEOUT_SECONDS`.
-
-O Redis está configurado com AOF e `appendfsync everysec`, além de snapshots
-RDB. Isso reduz a janela de perda de dados, mas não a elimina em falhas
-abruptas.
+As credenciais acima são apenas para desenvolvimento local. Não as use em
+outros ambientes.

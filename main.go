@@ -24,7 +24,6 @@ func main() {
 	pool, err := pgxpool.New(ctx, pgURL)
 	if err != nil { log.Fatal(err) }
 	defer pool.Close()
-	if len(os.Args)>1 && os.Args[1] == "--migrate" { if err := migrate(ctx,pool); err != nil { log.Fatal(err) }; return }
 
 	store := &EventStore{redis:rdb, pg:pool}
 	go store.runWorker(ctx)

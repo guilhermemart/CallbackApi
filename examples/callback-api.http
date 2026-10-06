@@ -1,0 +1,23 @@
+GET http://localhost:8080/v1/health
+Accept: application/json
+
+###
+GET http://localhost:8080/v1/health/ready
+Accept: application/json
+
+###
+POST http://localhost:8080/v1/event/save
+Content-Type: application/json
+
+{
+  "event_type": "motion_detected",
+  "payload": {
+    "source": ["equipment-x"],
+    "source_id": "equipment-x-01",
+    "created_at": "2026-10-05T12:00:00Z",
+    "created_by": "local-user",
+    "data": {
+      "message": "motion detected"
+    }
+  }
+}

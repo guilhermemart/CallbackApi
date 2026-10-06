@@ -19,7 +19,8 @@ spec:
         - name: migrations
           image: callback-api:local
           imagePullPolicy: Never
-          args: ["--migrate"]
+          command: ["tern"]
+          args: ["migrate", "--migrations", "/app/migrations"]
           envFrom:
             - secretRef:
                 name: callbackapi-postgres

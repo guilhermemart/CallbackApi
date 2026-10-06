@@ -8,7 +8,9 @@ input contract is documented in `callback-contract.md`.
 - `main.go` starts the HTTP server and provides liveness and readiness checks.
 - `event.go` validates event requests, manages current state in Redis, and runs
   the PostgreSQL snapshot worker.
-- `--migrate` creates the PostgreSQL `events` table.
+- `migrations/` contains versioned SQL migrations managed by Tern.
+- Run `tern migrate --migrations migrations` to apply pending migrations before
+  starting the API.
 
 ## Event flow
 

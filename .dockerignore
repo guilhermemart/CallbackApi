@@ -1,6 +1,4 @@
 .git
-.vs
-.tools
 **/bin
 **/obj
 tests
