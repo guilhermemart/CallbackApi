@@ -27,8 +27,14 @@ novos eventos.
 - Worker que persiste snapshots no PostgreSQL.
 - Rotas de health/readiness, criação, consulta, atualização e exclusão de
   eventos.
+- Proteção contra duplicidade na criação: `event_unique_hash` é único por
+  `source_id`.
 - Migrations SQL versionadas executadas com Tern. A migration inicial está em
-  [`migrations/001_initial_schema.sql`](migrations/001_initial_schema.sql).
+  [`migrations/001_initial_schema.sql`](migrations/001_initial_schema.sql); a
+  coluna de hash e seu índice inicial estão em
+  [`migrations/002_event_deduplication.sql`](migrations/002_event_deduplication.sql),
+  e a unicidade permanente por emissor está em
+  [`migrations/003_unique_event_hash_per_source.sql`](migrations/003_unique_event_hash_per_source.sql).
 - Imagens e manifests Docker/Kubernetes para executar os serviços.
 
 Atualmente, a rota de listagem retorna até 100 eventos ativos do Redis e usa o
@@ -38,14 +44,16 @@ e usá-lo na ordenação da tabela.
 
 ## Contrato do evento
 
-O endpoint de criação recebe `event_type` e `payload`. O payload deve ser um
-objeto JSON com `source` (array não vazio), `source_id` (string não vazia),
+O endpoint de criação recebe `event_type`, `event_unique_hash` e `payload`. O hash
+é uma string opaca gerada pelo emissor. O payload deve ser um objeto JSON com
+`source` (array não vazio), `source_id` (string não vazia),
 `data` (objeto), `created_at` (data e hora RFC 3339) e `created_by` (string não
 vazia).
 
 ```json
 {
   "event_type": "motion_detected",
+  "event_unique_hash": "sender-generated-value-0001",
   "payload": {
     "source": ["camera-01"],
     "source_id": "front-door",
@@ -58,8 +66,26 @@ vazia).
 }
 ```
 
-O endpoint de criação retorna `202 Accepted` depois de enfileirar o evento no
-Redis. A gravação no PostgreSQL acontece de forma assíncrona.
+Antes de acessar PostgreSQL, a API consulta no Redis os hashes dos dez eventos
+mais recentemente aceitos para o mesmo `source_id`. Uma correspondência retorna
+`409 Conflict`. Se não houver correspondência, PostgreSQL impõe unicidade
+permanente ao par (`source_id`, `event_unique_hash`), cobrindo hashes fora dessa
+janela e requisições concorrentes. Depois de reservar o evento no banco e
+enfileirá-lo no Redis, a API atualiza a lista dos dez hashes recentes e responde
+`202 Accepted`. O `created_at` continua sendo usado para ordenar os eventos; ele
+não define a janela de deduplicação. O worker continua processando o stream de
+eventos e operações.
+
+Antes de aplicar a migration 003 em um banco que já recebeu hashes, confira se
+há pares duplicados; a criação do índice único falha enquanto eles existirem:
+
+```sql
+SELECT source_id, event_unique_hash, count(*)
+FROM events
+WHERE source_id IS NOT NULL AND event_unique_hash IS NOT NULL
+GROUP BY source_id, event_unique_hash
+HAVING count(*) > 1;
+```
 
 ## Arquitetura
 
@@ -85,6 +111,8 @@ definidas em arquivos SQL versionados.
 | --- | --- | --- |
 | `GET` | `/v1/health` | Verifica se a API está respondendo. |
 | `GET` | `/v1/health/ready` | Verifica as conexões com PostgreSQL e Redis. |
+| `GET` | `/swagger/` | Abre a interface interativa Swagger UI. |
+| `GET` | `/openapi.yaml` | Retorna a especificação OpenAPI. |
 | `POST` | `/v1/event/save` | Valida e enfileira um evento. |
 | `GET` | `/v1/events/list` | Lista até 100 eventos ativos. |
 | `GET` | `/v1/event/get/{id}` | Consulta um evento pelo ID. |
@@ -99,6 +127,10 @@ O guia de execução com Docker, PostgreSQL e Redis está em
 Para iniciar em Kubernetes com Kind, consulte [`k8s/README.md`](k8s/README.md).
 
 Por padrão, a API escuta em `:8080`. As variáveis principais são:
+
+Abra `http://localhost:8080/swagger/` para explorar e chamar as rotas pela
+interface Swagger UI. A página carrega os arquivos da interface pelo CDN do
+unpkg; a especificação OpenAPI é servida pela própria API em `/openapi.yaml`.
 
 | Variável | Uso |
 | --- | --- |
@@ -117,5 +149,4 @@ Por padrão, a API escuta em `:8080`. As variáveis principais são:
 - Adicionar SSE na API Go e consumir o stream no React.
 - Registrar o horário de recebimento no servidor e ordenar por ele, do mais
   recente para o mais antigo.
-- Definir autenticação das origens, proteção contra eventos duplicados,
-  paginação e monitoramento do processamento.
+- Definir autenticação das origens, paginação e monitoramento do processamento.

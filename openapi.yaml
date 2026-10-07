@@ -1,0 +1,217 @@
+openapi: 3.0.3
+info:
+  title: Callback API
+  version: 1.0.0
+  description: HTTP API for accepting and managing callback events.
+servers:
+  - url: /
+    description: Current API host
+tags:
+  - name: Health
+  - name: Events
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Check whether the API is responding
+      responses:
+        '200':
+          description: API is responding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  service: { type: string, example: callback-api }
+  /v1/health/ready:
+    get:
+      tags: [Health]
+      summary: Check PostgreSQL and Redis connectivity
+      responses:
+        '200':
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+                  database: { type: string, example: ok }
+                  redis: { type: string, example: ok }
+        '503':
+          description: A dependency is unavailable
+  /v1/event/save:
+    post:
+      tags: [Events]
+      summary: Validate, deduplicate, and queue an event
+      description: Checks the ten most recently accepted hashes for this source in Redis, then uses PostgreSQL's permanent unique constraint as the authoritative duplicate check.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventInput'
+      responses:
+        '202':
+          description: Event accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedEvent'
+        '400':
+          description: Request body or event fields are invalid
+        '409':
+          description: Hash was already used for this source
+        '503':
+          description: Redis deduplication check is unavailable
+        '500':
+          description: Event could not be reserved or queued
+  /v1/events/list:
+    get:
+      tags: [Events]
+      summary: List up to 100 active events
+      responses:
+        '200':
+          description: Events ordered by payload created_at, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+  /v1/event/get/{id}:
+    get:
+      tags: [Events]
+      summary: Get an event by ID
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '200':
+          description: Event found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '404':
+          description: Event not found
+  /v1/event/update/{id}:
+    post:
+      tags: [Events]
+      summary: Update an event
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventInput'
+      responses:
+        '202':
+          description: Update queued
+        '400':
+          description: Request body or event fields are invalid
+        '404':
+          description: Event not found
+  /v1/events/softdelete/{id}:
+    patch:
+      tags: [Events]
+      summary: Soft delete an event
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '202':
+          description: Soft delete queued
+        '404':
+          description: Event not found or already deleted
+  /v1/events/delete/{id}:
+    delete:
+      tags: [Events]
+      summary: Permanently delete an event
+      parameters:
+        - $ref: '#/components/parameters/EventId'
+      responses:
+        '202':
+          description: Delete queued
+        '404':
+          description: Event not found
+components:
+  parameters:
+    EventId:
+      name: id
+      in: path
+      required: true
+      description: Event UUID
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    EventInput:
+      type: object
+      required: [event_type, event_unique_hash, payload]
+      properties:
+        event_type:
+          type: string
+          example: motion_detected
+        event_unique_hash:
+          type: string
+          description: Opaque hash supplied by the sender and unique per source_id.
+          example: sender-generated-value-0001
+        payload:
+          $ref: '#/components/schemas/EventPayload'
+    EventPayload:
+      type: object
+      required: [source, source_id, data, created_at, created_by]
+      properties:
+        source:
+          type: array
+          minItems: 1
+          items: { type: string }
+          example: [camera-01]
+        source_id:
+          type: string
+          example: front-door
+        data:
+          type: object
+          additionalProperties: true
+          example: { message: motion detected }
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-10-05T12:00:00Z'
+        created_by:
+          type: string
+          example: system-a
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        deleted_by:
+          type: string
+          nullable: true
+      additionalProperties: true
+    AcceptedEvent:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        event_type: { type: string }
+        event_unique_hash: { type: string }
+        payload:
+          $ref: '#/components/schemas/EventPayload'
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+        status: { type: string, example: queued }
+    Event:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        eventType: { type: string }
+        eventUniqueHash: { type: string }
+        sourceId: { type: string }
+        payload:
+          $ref: '#/components/schemas/EventPayload'
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        deletedAt: { type: string, format: date-time, nullable: true }

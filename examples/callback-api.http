@@ -11,6 +11,7 @@ Content-Type: application/json
 
 {
   "event_type": "motion_detected",
+  "event_unique_hash": "sender-generated-value-0001",
   "payload": {
     "source": ["equipment-x"],
     "source_id": "equipment-x-01",
