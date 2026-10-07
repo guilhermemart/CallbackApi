@@ -123,8 +123,18 @@ paths:
       responses:
         '202':
           description: Soft delete queued
+        '200':
+          description: Event was already soft-deleted; no database operation was queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  title: { type: string, example: Event already soft-deleted }
+                  status: { type: integer, example: 200 }
+                  detail: { type: string, example: This event was already soft-deleted. No database operation was queued. }
         '404':
-          description: Event not found or already deleted
+          description: Event not found
   /v1/events/delete/{id}:
     delete:
       tags: [Events]

@@ -29,7 +29,9 @@ Campos obrigatórios definidos neste contrato: `event_type`, `event_unique_hash`
 `payload.created_at` e `payload.created_by`. Em eventos ativos, `payload.deleted_at` e
 `payload.deleted_by` podem ser nulos. Na exclusão lógica, a API preenche
 `payload.deleted_at` com o horário UTC e `payload.deleted_by` com `"system_action"`
-enquanto não existe autenticação.
+enquanto não existe autenticação. Repetir a solicitação de exclusão lógica de um
+evento já excluído retorna `200 OK` com uma mensagem informativa, sem enfileirar
+outra operação no banco.
 
 Na criação, a API consulta primeiro no Redis os hashes dos dez eventos mais
 recentemente aceitos para o mesmo `payload.source_id`. Uma correspondência

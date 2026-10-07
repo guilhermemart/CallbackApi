@@ -129,9 +129,7 @@ func decodeInput(w http.ResponseWriter, r *http.Request) (input, bool) {
 	return in, true
 }
 
-
 func rawString(b json.RawMessage) string { var s string; _ = json.Unmarshal(b, &s); return s }
-
 
 func payloadString(b json.RawMessage, k string) (string, bool) {
 	var p map[string]json.RawMessage
@@ -140,7 +138,6 @@ func payloadString(b json.RawMessage, k string) (string, bool) {
 	err := json.Unmarshal(p[k], &s)
 	return s, err == nil
 }
-
 
 func (s *EventStore) enqueue(ctx context.Context, e Event) (string, error) {
 	b, _ := json.Marshal(e)
@@ -247,6 +244,15 @@ func (s *EventStore) op(ctx context.Context, op string, e *Event, id string) err
 	return err
 }
 
+func hasStreamMessages(streams []redis.XStream) bool {
+	for _, stream := range streams {
+		if len(stream.Messages) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *EventStore) list(w http.ResponseWriter, r *http.Request) {
 	ids, err := s.redis.ZRevRange(r.Context(), indexKey, 0, 99).Result()
 	if err != nil {
@@ -320,8 +326,20 @@ func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
 }
 func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 	e, err := s.state(r.Context(), r.PathValue("id"))
-	if err != nil || e == nil || e.DeletedAt != nil {
+	if err != nil {
+		writeJSON(w, 500, map[string]string{"error": "internal server error"})
+		return
+	}
+	if e == nil {
 		http.NotFound(w, r)
+		return
+	}
+	if e.DeletedAt != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"title":  "Event already soft-deleted",
+			"status": http.StatusOK,
+			"detail": "This event was already soft-deleted. No database operation was queued.",
+		})
 		return
 	}
 	now := time.Now().UTC()
@@ -375,7 +393,7 @@ func (s *EventStore) runWorker(ctx context.Context) {
 		n := 0
 		for _, stream := range []string{eventStream, opStream} {
 			entries, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{Group: groupName, Consumer: consumer, Streams: []string{stream, "0"}, Count: 10}).Result()
-			if err == nil && len(entries) == 0 {
+			if (err == nil || err == redis.Nil) && !hasStreamMessages(entries) {
 				entries, err = s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{Group: groupName, Consumer: consumer, Streams: []string{stream, ">"}, Count: 10, Block: time.Second}).Result()
 			}
 			if err != nil && err != redis.Nil && ctx.Err() == nil {
