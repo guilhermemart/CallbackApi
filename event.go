@@ -44,32 +44,62 @@ type EventStore struct {
 	pg    *pgxpool.Pool
 }
 
+// save validates a callback event, checks for duplicates, and queues it.
 func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 	in, ok := decodeInput(w, r)
 	if !ok {
 		return
 	}
 	if strings.TrimSpace(in.EventUniqueHash) == "" {
-		writeJSON(w, 400, map[string]any{"title": "One or more validation errors occurred.", "status": 400, "errors": map[string][]string{"EventUniqueHash": {"The event_unique_hash field is required."}}})
+		writeJSON(w, 400, map[string]any{
+			"title":  "One or more validation errors occurred.",
+			"status": 400,
+			"errors": map[string][]string{
+				"EventUniqueHash": {"The event_unique_hash field is required."},
+			},
+		})
 		return
 	}
 	now := time.Now().UTC()
 	created, _ := payloadString(in.Payload, "created_at")
 	t, err := time.Parse(time.RFC3339Nano, created)
 	if err != nil {
-		writeJSON(w, 400, map[string]any{"title": "One or more validation errors occurred.", "status": 400, "errors": map[string][]string{"Payload": {"created_at must be an ISO 8601 date and time."}}})
+		writeJSON(w, 400, map[string]any{
+			"title":  "One or more validation errors occurred.",
+			"status": 400,
+			"errors": map[string][]string{
+				"Payload": {"created_at must be an ISO 8601 date and time."},
+			},
+		})
 		return
 	}
 	sourceID, _ := payloadString(in.Payload, "source_id")
-	e := Event{ID: newUUID(), EventType: in.EventType, Payload: in.Payload, SourceID: sourceID, EventUniqueHash: in.EventUniqueHash, CreatedAt: t.UTC(), UpdatedAt: now}
-	recentDuplicate, err := s.hasRecentHash(r.Context(), e.SourceID, e.EventUniqueHash)
+	e := Event{
+		ID:              newUUID(),
+		EventType:       in.EventType,
+		Payload:         in.Payload,
+		SourceID:        sourceID,
+		EventUniqueHash: in.EventUniqueHash,
+		CreatedAt:       t.UTC(),
+		UpdatedAt:       now,
+	}
+	recentDuplicate, err := s.hasRecentHash(
+		r.Context(), e.SourceID, e.EventUniqueHash,
+	)
 	if err != nil {
 		log.Printf("recent hash lookup failed: %v", err)
-		writeJSON(w, 503, map[string]string{"title": "Deduplication check is unavailable"})
+		writeJSON(w, 503, map[string]string{
+			"title": "Deduplication check is unavailable",
+		})
 		return
 	}
 	if recentDuplicate {
-		writeJSON(w, 409, map[string]any{"title": "Duplicate event detected", "status": 409, "detail": "event_unique_hash appears in the ten most recent events for this source_id."})
+		writeJSON(w, 409, map[string]any{
+			"title":  "Duplicate event detected",
+			"status": 409,
+			"detail": "event_unique_hash appears in the ten most recent events " +
+				"for this source_id.",
+		})
 		return
 	}
 	duplicate, err := s.reserveAndEnqueue(r.Context(), e)
@@ -78,21 +108,41 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if duplicate {
-		writeJSON(w, 409, map[string]any{"title": "Duplicate event detected", "status": 409, "detail": "event_unique_hash has already been used for this source_id."})
+		writeJSON(w, 409, map[string]any{
+			"title":  "Duplicate event detected",
+			"status": 409,
+			"detail": "event_unique_hash has already been used for this " +
+				"source_id.",
+		})
 		return
 	}
-	if err := s.rememberRecentHash(r.Context(), e.SourceID, e.EventUniqueHash); err != nil {
+	if err := s.rememberRecentHash(
+		r.Context(), e.SourceID, e.EventUniqueHash,
+	); err != nil {
 		log.Printf("recent hash cache update failed for %s: %v", e.SourceID, err)
 	}
 	w.Header().Set("Location", "/v1/events/"+e.ID)
-	writeJSON(w, 202, map[string]any{"id": e.ID, "event_type": e.EventType, "event_unique_hash": e.EventUniqueHash, "payload": json.RawMessage(in.Payload), "created_at": e.CreatedAt, "updated_at": e.UpdatedAt, "deleted_at": e.DeletedAt, "status": "queued"})
+	writeJSON(w, 202, map[string]any{
+		"id":                e.ID,
+		"event_type":        e.EventType,
+		"event_unique_hash": e.EventUniqueHash,
+		"payload":           json.RawMessage(in.Payload),
+		"created_at":        e.CreatedAt,
+		"updated_at":        e.UpdatedAt,
+		"deleted_at":        e.DeletedAt,
+		"status":            "queued",
+	})
 }
 
+// decodeInput decodes and validates an event request body.
 func decodeInput(w http.ResponseWriter, r *http.Request) (input, bool) {
 	var in input
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))
 	if err := d.Decode(&in); err != nil {
-		writeJSON(w, 400, map[string]any{"title": "One or more validation errors occurred.", "status": 400})
+		writeJSON(w, 400, map[string]any{
+			"title":  "One or more validation errors occurred.",
+			"status": 400,
+		})
 		return in, false
 	}
 	errs := map[string][]string{}
@@ -105,32 +155,58 @@ func decodeInput(w http.ResponseWriter, r *http.Request) (input, bool) {
 	} else {
 		var src []any
 		if json.Unmarshal(p["source"], &src) != nil || len(src) == 0 {
-			errs["Payload"] = append(errs["Payload"], "source must be a non-empty JSON array.")
+			errs["Payload"] = append(
+				errs["Payload"],
+				"source must be a non-empty JSON array.",
+			)
 		}
 		var sid, cb string
-		if json.Unmarshal(p["source_id"], &sid) != nil || strings.TrimSpace(sid) == "" {
-			errs["Payload"] = append(errs["Payload"], "source_id must be a non-empty string.")
+		if json.Unmarshal(p["source_id"], &sid) != nil ||
+			strings.TrimSpace(sid) == "" {
+			errs["Payload"] = append(
+				errs["Payload"],
+				"source_id must be a non-empty string.",
+			)
 		}
 		var data map[string]json.RawMessage
 		if json.Unmarshal(p["data"], &data) != nil || data == nil {
 			errs["Payload"] = append(errs["Payload"], "data must be a JSON object.")
 		}
-		if _, err := time.Parse(time.RFC3339Nano, rawString(p["created_at"])); err != nil {
-			errs["Payload"] = append(errs["Payload"], "created_at must be an ISO 8601 date and time.")
+		createdAt := rawString(p["created_at"])
+		if _, err := time.Parse(time.RFC3339Nano, createdAt); err != nil {
+			errs["Payload"] = append(
+				errs["Payload"],
+				"created_at must be an ISO 8601 date and time.",
+			)
 		}
-		if json.Unmarshal(p["created_by"], &cb) != nil || strings.TrimSpace(cb) == "" {
-			errs["Payload"] = append(errs["Payload"], "created_by must be a non-empty string.")
+		if json.Unmarshal(p["created_by"], &cb) != nil ||
+			strings.TrimSpace(cb) == "" {
+			errs["Payload"] = append(
+				errs["Payload"],
+				"created_by must be a non-empty string.",
+			)
 		}
 	}
 	if len(errs) > 0 {
-		writeJSON(w, 400, map[string]any{"title": "One or more validation errors occurred.", "status": 400, "errors": errs})
+		writeJSON(w, 400, map[string]any{
+			"title":  "One or more validation errors occurred.",
+			"status": 400,
+			"errors": errs,
+		})
 		return in, false
 	}
 	return in, true
 }
 
-func rawString(b json.RawMessage) string { var s string; _ = json.Unmarshal(b, &s); return s }
+// rawString converts a JSON value to a string, returning an empty string
+// when conversion fails.
+func rawString(b json.RawMessage) string {
+	var s string
+	_ = json.Unmarshal(b, &s)
+	return s
+}
 
+// payloadString returns the named field from a JSON payload as a string.
 func payloadString(b json.RawMessage, k string) (string, bool) {
 	var p map[string]json.RawMessage
 	_ = json.Unmarshal(b, &p)
@@ -139,23 +215,36 @@ func payloadString(b json.RawMessage, k string) (string, bool) {
 	return s, err == nil
 }
 
+// enqueue stores an event in Redis and appends it to the event stream.
 func (s *EventStore) enqueue(ctx context.Context, e Event) (string, error) {
 	b, _ := json.Marshal(e)
 	pipe := s.redis.TxPipeline()
 	pipe.Del(ctx, "callback:event:deleted:"+e.ID)
 	pipe.Set(ctx, "callback:event:"+e.ID, b, 0)
-	pipe.ZAdd(ctx, indexKey, redis.Z{Score: float64(e.CreatedAt.UnixMilli()), Member: e.ID})
-	streamEntry := pipe.XAdd(ctx, &redis.XAddArgs{Stream: eventStream, Values: map[string]any{"event": string(b)}})
+	pipe.ZAdd(ctx, indexKey, redis.Z{
+		Score:  float64(e.CreatedAt.UnixMilli()),
+		Member: e.ID,
+	})
+	streamEntry := pipe.XAdd(ctx, &redis.XAddArgs{
+		Stream: eventStream,
+		Values: map[string]any{"event": string(b)},
+	})
 	_, err := pipe.Exec(ctx)
 	streamID, _ := streamEntry.Result()
 	return streamID, err
 }
 
+// recentHashKey builds the Redis key for recent hashes belonging to a source.
 func recentHashKey(sourceID string) string {
 	return recentHashPrefix + fmt.Sprintf("%x", sha256.Sum256([]byte(sourceID)))
 }
 
-func (s *EventStore) hasRecentHash(ctx context.Context, sourceID, eventHash string) (bool, error) {
+// hasRecentHash checks whether the hash appears among the source's ten recent
+// hashes.
+func (s *EventStore) hasRecentHash(
+	ctx context.Context,
+	sourceID, eventHash string,
+) (bool, error) {
 	hashes, err := s.redis.LRange(ctx, recentHashKey(sourceID), -10, -1).Result()
 	if err != nil {
 		return false, err
@@ -168,7 +257,12 @@ func (s *EventStore) hasRecentHash(ctx context.Context, sourceID, eventHash stri
 	return false, nil
 }
 
-func (s *EventStore) rememberRecentHash(ctx context.Context, sourceID, eventHash string) error {
+// rememberRecentHash appends a hash for a source and trims its list to ten
+// entries.
+func (s *EventStore) rememberRecentHash(
+	ctx context.Context,
+	sourceID, eventHash string,
+) error {
 	key := recentHashKey(sourceID)
 	pipe := s.redis.TxPipeline()
 	pipe.RPush(ctx, key, eventHash)
@@ -177,13 +271,34 @@ func (s *EventStore) rememberRecentHash(ctx context.Context, sourceID, eventHash
 	return err
 }
 
-func (s *EventStore) reserveAndEnqueue(ctx context.Context, e Event) (bool, error) {
+// reserveAndEnqueue reserves an event hash in PostgreSQL and queues the event
+// in Redis.
+func (s *EventStore) reserveAndEnqueue(
+	ctx context.Context,
+	e Event,
+) (bool, error) {
 	tx, err := s.pg.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	tag, err := tx.Exec(ctx, `INSERT INTO events("Id",event_type,payload,source_id,event_unique_hash,created_at,updated_at,deleted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (source_id,event_unique_hash) DO NOTHING`, e.ID, e.EventType, e.Payload, e.SourceID, e.EventUniqueHash, e.CreatedAt, e.UpdatedAt, e.DeletedAt)
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO events (
+			"Id", event_type, payload, source_id, event_unique_hash,
+			created_at, updated_at, deleted_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT (source_id, event_unique_hash) DO NOTHING
+	`,
+		e.ID,
+		e.EventType,
+		e.Payload,
+		e.SourceID,
+		e.EventUniqueHash,
+		e.CreatedAt,
+		e.UpdatedAt,
+		e.DeletedAt,
+	)
 	if err != nil {
 		return false, err
 	}
@@ -201,7 +316,13 @@ func (s *EventStore) reserveAndEnqueue(ctx context.Context, e Event) (bool, erro
 	}
 	return false, nil
 }
-func (s *EventStore) removeQueuedState(ctx context.Context, id, streamID string) {
+
+// removeQueuedState removes an uncommitted event's state, index entry, and
+// stream entry from Redis.
+func (s *EventStore) removeQueuedState(
+	ctx context.Context,
+	id, streamID string,
+) {
 	pipe := s.redis.TxPipeline()
 	pipe.Del(ctx, "callback:event:"+id)
 	pipe.ZRem(ctx, indexKey, id)
@@ -212,6 +333,8 @@ func (s *EventStore) removeQueuedState(ctx context.Context, id, streamID string)
 		log.Printf("queued event cleanup failed for %s: %v", id, err)
 	}
 }
+
+// state loads an event's current state from Redis.
 func (s *EventStore) state(ctx context.Context, id string) (*Event, error) {
 	b, err := s.redis.Get(ctx, "callback:event:"+id).Bytes()
 	if err == redis.Nil {
@@ -224,15 +347,27 @@ func (s *EventStore) state(ctx context.Context, id string) (*Event, error) {
 	err = json.Unmarshal(b, &e)
 	return &e, err
 }
+
+// saveState stores an event and updates its sorted-set index in Redis.
 func (s *EventStore) saveState(ctx context.Context, e Event) error {
 	b, _ := json.Marshal(e)
 	p := s.redis.TxPipeline()
 	p.Set(ctx, "callback:event:"+e.ID, b, 0)
-	p.ZAdd(ctx, indexKey, redis.Z{Score: float64(e.CreatedAt.UnixMilli()), Member: e.ID})
+	p.ZAdd(ctx, indexKey, redis.Z{
+		Score:  float64(e.CreatedAt.UnixMilli()),
+		Member: e.ID,
+	})
 	_, err := p.Exec(ctx)
 	return err
 }
-func (s *EventStore) op(ctx context.Context, op string, e *Event, id string) error {
+
+// op appends a snapshot operation to the Redis operation stream.
+func (s *EventStore) op(
+	ctx context.Context,
+	op string,
+	e *Event,
+	id string,
+) error {
 	v := map[string]any{"operation": op}
 	if e != nil {
 		b, _ := json.Marshal(e)
@@ -240,10 +375,14 @@ func (s *EventStore) op(ctx context.Context, op string, e *Event, id string) err
 	} else {
 		v["event_id"] = id
 	}
-	_, err := s.redis.XAdd(ctx, &redis.XAddArgs{Stream: opStream, Values: v}).Result()
+	_, err := s.redis.XAdd(ctx, &redis.XAddArgs{
+		Stream: opStream,
+		Values: v,
+	}).Result()
 	return err
 }
 
+// hasStreamMessages reports whether any Redis stream batch contains messages.
 func hasStreamMessages(streams []redis.XStream) bool {
 	for _, stream := range streams {
 		if len(stream.Messages) > 0 {
@@ -253,6 +392,7 @@ func hasStreamMessages(streams []redis.XStream) bool {
 	return false
 }
 
+// list returns active events from the Redis index.
 func (s *EventStore) list(w http.ResponseWriter, r *http.Request) {
 	ids, err := s.redis.ZRevRange(r.Context(), indexKey, 0, 99).Result()
 	if err != nil {
@@ -268,6 +408,8 @@ func (s *EventStore) list(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, out)
 }
+
+// get returns an event from Redis or loads its snapshot from PostgreSQL.
 func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	e, err := s.state(r.Context(), id)
@@ -287,7 +429,23 @@ func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
 	}
 	var dbEvent Event
 	var payload string
-	err = s.pg.QueryRow(r.Context(), `SELECT "Id",event_type,payload::text,COALESCE(source_id,''),COALESCE(event_unique_hash,''),created_at,updated_at,deleted_at FROM events WHERE "Id"=$1`, id).Scan(&dbEvent.ID, &dbEvent.EventType, &payload, &dbEvent.SourceID, &dbEvent.EventUniqueHash, &dbEvent.CreatedAt, &dbEvent.UpdatedAt, &dbEvent.DeletedAt)
+	err = s.pg.QueryRow(r.Context(), `
+		SELECT
+			"Id", event_type, payload::text,
+			COALESCE(source_id, ''), COALESCE(event_unique_hash, ''),
+			created_at, updated_at, deleted_at
+		FROM events
+		WHERE "Id" = $1
+	`, id).Scan(
+		&dbEvent.ID,
+		&dbEvent.EventType,
+		&payload,
+		&dbEvent.SourceID,
+		&dbEvent.EventUniqueHash,
+		&dbEvent.CreatedAt,
+		&dbEvent.UpdatedAt,
+		&dbEvent.DeletedAt,
+	)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -296,6 +454,8 @@ func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
 	_ = s.saveState(r.Context(), dbEvent)
 	writeJSON(w, 200, dbEvent)
 }
+
+// update changes an event and queues the snapshot update.
 func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
 	in, ok := decodeInput(w, r)
 	if !ok {
@@ -324,6 +484,8 @@ func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Location", "/v1/events/"+e.ID)
 	w.WriteHeader(202)
 }
+
+// softDelete marks an event as deleted without removing it permanently.
 func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 	e, err := s.state(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -338,7 +500,8 @@ func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"title":  "Event already soft-deleted",
 			"status": http.StatusOK,
-			"detail": "This event was already soft-deleted. No database operation was queued.",
+			"detail": "This event was already soft-deleted. " +
+				"No database operation was queued.",
 		})
 		return
 	}
@@ -360,6 +523,8 @@ func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(202)
 }
+
+// delete removes an event from Redis and queues its permanent deletion.
 func (s *EventStore) delete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	e, err := s.state(r.Context(), id)
@@ -382,6 +547,8 @@ func (s *EventStore) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(202)
 }
 
+// runWorker consumes Redis streams and applies their events and operations
+// to PostgreSQL.
 func (s *EventStore) runWorker(ctx context.Context) {
 	for _, stream := range []string{eventStream, opStream} {
 		err := s.redis.XGroupCreateMkStream(ctx, stream, groupName, "0").Err()
@@ -392,9 +559,20 @@ func (s *EventStore) runWorker(ctx context.Context) {
 	for ctx.Err() == nil {
 		n := 0
 		for _, stream := range []string{eventStream, opStream} {
-			entries, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{Group: groupName, Consumer: consumer, Streams: []string{stream, "0"}, Count: 10}).Result()
+			entries, err := s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+				Group:    groupName,
+				Consumer: consumer,
+				Streams:  []string{stream, "0"},
+				Count:    10,
+			}).Result()
 			if (err == nil || err == redis.Nil) && !hasStreamMessages(entries) {
-				entries, err = s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{Group: groupName, Consumer: consumer, Streams: []string{stream, ">"}, Count: 10, Block: time.Second}).Result()
+				entries, err = s.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
+					Group:    groupName,
+					Consumer: consumer,
+					Streams:  []string{stream, ">"},
+					Count:    10,
+					Block:    time.Second,
+				}).Result()
 			}
 			if err != nil && err != redis.Nil && ctx.Err() == nil {
 				log.Printf("stream read: %v", err)
@@ -422,6 +600,8 @@ func (s *EventStore) runWorker(ctx context.Context) {
 		}
 	}
 }
+
+// persistEvent writes an event from the input stream to PostgreSQL.
 func (s *EventStore) persistEvent(ctx context.Context, m redis.XMessage) error {
 	e, ok := m.Values["event"].(string)
 	if !ok {
@@ -438,10 +618,31 @@ func (s *EventStore) persistEvent(ctx context.Context, m redis.XMessage) error {
 	if current == nil {
 		return nil
 	}
-	_, err = s.pg.Exec(ctx, `INSERT INTO events("Id",event_type,payload,source_id,event_unique_hash,created_at,updated_at,deleted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT("Id") DO NOTHING`, current.ID, current.EventType, current.Payload, current.SourceID, current.EventUniqueHash, current.CreatedAt, current.UpdatedAt, current.DeletedAt)
+	_, err = s.pg.Exec(ctx, `
+		INSERT INTO events (
+			"Id", event_type, payload, source_id, event_unique_hash,
+			created_at, updated_at, deleted_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT ("Id") DO NOTHING
+	`,
+		current.ID,
+		current.EventType,
+		current.Payload,
+		current.SourceID,
+		current.EventUniqueHash,
+		current.CreatedAt,
+		current.UpdatedAt,
+		current.DeletedAt,
+	)
 	return err
 }
-func (s *EventStore) applyOperation(ctx context.Context, m redis.XMessage) error {
+
+// applyOperation applies a snapshot operation from Redis to PostgreSQL.
+func (s *EventStore) applyOperation(
+	ctx context.Context,
+	m redis.XMessage,
+) error {
 	op, _ := m.Values["operation"].(string)
 	if op == "hard_delete" {
 		id, _ := m.Values["event_id"].(string)
@@ -458,17 +659,32 @@ func (s *EventStore) applyOperation(ctx context.Context, m redis.XMessage) error
 	}
 	switch op {
 	case "update":
-		_, err := s.pg.Exec(ctx, `UPDATE events SET event_type=$2,payload=$3,updated_at=$4,deleted_at=NULL WHERE "Id"=$1`, e.ID, e.EventType, e.Payload, e.UpdatedAt)
+		_, err := s.pg.Exec(ctx, `
+			UPDATE events
+			SET event_type = $2, payload = $3, updated_at = $4,
+				deleted_at = NULL
+			WHERE "Id" = $1
+		`, e.ID, e.EventType, e.Payload, e.UpdatedAt)
 		return err
 	case "soft_delete":
-		_, err := s.pg.Exec(ctx, `UPDATE events SET payload=$2,updated_at=$3,deleted_at=$4 WHERE "Id"=$1 AND deleted_at IS NULL`, e.ID, e.Payload, e.UpdatedAt, e.DeletedAt)
+		_, err := s.pg.Exec(ctx, `
+			UPDATE events
+			SET payload = $2, updated_at = $3, deleted_at = $4
+			WHERE "Id" = $1 AND deleted_at IS NULL
+		`, e.ID, e.Payload, e.UpdatedAt, e.DeletedAt)
 		return err
 	case "sync":
-		_, err := s.pg.Exec(ctx, `UPDATE events SET event_type=$2,payload=$3,updated_at=$4,deleted_at=$5 WHERE "Id"=$1 AND updated_at<>$4`, e.ID, e.EventType, e.Payload, e.UpdatedAt, e.DeletedAt)
+		_, err := s.pg.Exec(ctx, `
+			UPDATE events
+			SET event_type = $2, payload = $3, updated_at = $4, deleted_at = $5
+			WHERE "Id" = $1 AND updated_at <> $4
+		`, e.ID, e.EventType, e.Payload, e.UpdatedAt, e.DeletedAt)
 		return err
 	}
 	return fmt.Errorf("unknown operation %q", op)
 }
+
+// newUUID generates a version 4 UUID.
 func newUUID() string {
 	b := make([]byte, 16)
 	if _, err := randRead(b); err != nil {
