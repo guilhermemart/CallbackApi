@@ -24,7 +24,15 @@ func swaggerUI(w http.ResponseWriter, r *http.Request) {
     <title>Callback API · Swagger UI</title>
     <link rel="stylesheet"
       href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
-    <style>body { margin: 0; } .topbar { display: none; }</style>
+    <style>
+      body {
+        margin: 0;
+      }
+
+      .topbar {
+        display: none;
+      }
+    </style>
   </head>
   <body>
     <div id="swagger-ui"></div>

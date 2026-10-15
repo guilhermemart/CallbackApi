@@ -20,9 +20,15 @@ kubectl apply -f .\k8s\ingress.yaml
 
 Use `http://localhost/v1/health/ready`.
 
-Estes manifests criam PostgreSQL e Redis persistentes, executam as migrations e iniciam a API.
+O Ingress deste exemplo não configura TLS e o manifesto da API define
+`COOKIE_SECURE=false` para permitir login local por HTTP. Configure TLS e defina
+`COOKIE_SECURE=true` antes de expor a aplicação fora do ambiente local.
 
-As senhas `callback` e `callbackpass` servem apenas para o ambiente didático local. Não use estes valores fora dele.
+Estes manifests criam PostgreSQL e Redis persistentes, executam as migrations e iniciam
+a API.
+
+As senhas `callback` e `callbackpass` servem apenas para o ambiente didático local. Não
+use estes valores fora dele.
 
 ## Execução
 
