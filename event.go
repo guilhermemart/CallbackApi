@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -26,6 +28,7 @@ const (
 
 type Event struct {
 	ID              string          `json:"id"`
+	UserID          string          `json:"userId"`
 	EventType       string          `json:"eventType"`
 	Payload         json.RawMessage `json:"payload"`
 	SourceID        string          `json:"sourceId"`
@@ -44,8 +47,23 @@ type EventStore struct {
 	pg    *pgxpool.Pool
 }
 
+func eventRequestUserID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	user, ok := r.Context().Value(authContextKey{}).(authUser)
+	if !ok || user.ID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "Authentication required.",
+		})
+		return "", false
+	}
+	return user.ID, true
+}
+
 // save validates a callback event, checks for duplicates, and queues it.
 func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
+	userID, ok := eventRequestUserID(w, r)
+	if !ok {
+		return
+	}
 	in, ok := decodeInput(w, r)
 	if !ok {
 		return
@@ -76,6 +94,7 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 	sourceID, _ := payloadString(in.Payload, "source_id")
 	e := Event{
 		ID:              newUUID(),
+		UserID:          userID,
 		EventType:       in.EventType,
 		Payload:         in.Payload,
 		SourceID:        sourceID,
@@ -84,7 +103,7 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:       now,
 	}
 	recentDuplicate, err := s.hasRecentHash(
-		r.Context(), e.SourceID, e.EventUniqueHash,
+		r.Context(), e.UserID, e.SourceID, e.EventUniqueHash,
 	)
 	if err != nil {
 		log.Printf("recent hash lookup failed: %v", err)
@@ -117,7 +136,7 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.rememberRecentHash(
-		r.Context(), e.SourceID, e.EventUniqueHash,
+		r.Context(), e.UserID, e.SourceID, e.EventUniqueHash,
 	); err != nil {
 		log.Printf("recent hash cache update failed for %s: %v", e.SourceID, err)
 	}
@@ -234,18 +253,20 @@ func (s *EventStore) enqueue(ctx context.Context, e Event) (string, error) {
 	return streamID, err
 }
 
-// recentHashKey builds the Redis key for recent hashes belonging to a source.
-func recentHashKey(sourceID string) string {
-	return recentHashPrefix + fmt.Sprintf("%x", sha256.Sum256([]byte(sourceID)))
+// recentHashKey builds the Redis key for recent hashes belonging to an account
+// and source.
+func recentHashKey(userID, sourceID string) string {
+	key := userID + "\x00" + sourceID
+	return recentHashPrefix + fmt.Sprintf("%x", sha256.Sum256([]byte(key)))
 }
 
-// hasRecentHash checks whether the hash appears among the source's ten recent
-// hashes.
+// hasRecentHash checks whether the hash appears among the account's ten recent
+// hashes for the source.
 func (s *EventStore) hasRecentHash(
 	ctx context.Context,
-	sourceID, eventHash string,
+	userID, sourceID, eventHash string,
 ) (bool, error) {
-	hashes, err := s.redis.LRange(ctx, recentHashKey(sourceID), -10, -1).Result()
+	hashes, err := s.redis.LRange(ctx, recentHashKey(userID, sourceID), -10, -1).Result()
 	if err != nil {
 		return false, err
 	}
@@ -257,13 +278,13 @@ func (s *EventStore) hasRecentHash(
 	return false, nil
 }
 
-// rememberRecentHash appends a hash for a source and trims its list to ten
-// entries.
+// rememberRecentHash appends an account-scoped source hash and trims the list
+// to ten entries.
 func (s *EventStore) rememberRecentHash(
 	ctx context.Context,
-	sourceID, eventHash string,
+	userID, sourceID, eventHash string,
 ) error {
-	key := recentHashKey(sourceID)
+	key := recentHashKey(userID, sourceID)
 	pipe := s.redis.TxPipeline()
 	pipe.RPush(ctx, key, eventHash)
 	pipe.LTrim(ctx, key, -10, -1)
@@ -284,13 +305,14 @@ func (s *EventStore) reserveAndEnqueue(
 	defer func() { _ = tx.Rollback(ctx) }()
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO events (
-			"Id", event_type, payload, source_id, event_unique_hash,
+			"Id", user_id, event_type, payload, source_id, event_unique_hash,
 			created_at, updated_at, deleted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (source_id, event_unique_hash) DO NOTHING
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (user_id, source_id, event_unique_hash) DO NOTHING
 	`,
 		e.ID,
+		e.UserID,
 		e.EventType,
 		e.Payload,
 		e.SourceID,
@@ -392,52 +414,98 @@ func hasStreamMessages(streams []redis.XStream) bool {
 	return false
 }
 
-// list returns active events from the Redis index.
+// list returns active events owned by the authenticated account.
 func (s *EventStore) list(w http.ResponseWriter, r *http.Request) {
-	ids, err := s.redis.ZRevRange(r.Context(), indexKey, 0, 99).Result()
-	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal server error"})
+	userID, ok := eventRequestUserID(w, r)
+	if !ok {
 		return
 	}
 	out := []Event{}
-	for _, id := range ids {
-		e, err := s.state(r.Context(), id)
-		if err == nil && e != nil && e.DeletedAt == nil {
+	for start := int64(0); len(out) < 100; start += 100 {
+		ids, err := s.redis.ZRevRange(r.Context(), indexKey, start, start+99).Result()
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
+		}
+		if len(ids) == 0 {
+			break
+		}
+		owners, err := s.ownedEventIDs(r.Context(), ids, userID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+			return
+		}
+		for _, id := range ids {
+			if _, owned := owners[id]; !owned {
+				continue
+			}
+			e, err := s.state(r.Context(), id)
+			if err != nil || e == nil || e.DeletedAt != nil {
+				continue
+			}
+			if e.UserID != "" && e.UserID != userID {
+				log.Printf("event owner mismatch in Redis for %s", id)
+				continue
+			}
+			if e.UserID == "" {
+				e.UserID = userID
+				if err := s.saveState(r.Context(), *e); err != nil {
+					log.Printf("legacy event owner cache update failed for %s: %v", id, err)
+				}
+			}
 			out = append(out, *e)
+			if len(out) == 100 {
+				break
+			}
 		}
 	}
-	writeJSON(w, 200, out)
+	writeJSON(w, http.StatusOK, out)
 }
 
-// get returns an event from Redis or loads its snapshot from PostgreSQL.
-func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	e, err := s.state(r.Context(), id)
+func (s *EventStore) ownedEventIDs(
+	ctx context.Context,
+	ids []string,
+	userID string,
+) (map[string]struct{}, error) {
+	rows, err := s.pg.Query(ctx, `
+		SELECT "Id"::text
+		FROM events
+		WHERE "Id"::text = ANY($1::text[])
+			AND user_id = $2
+			AND deleted_at IS NULL
+	`, ids, userID)
 	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal server error"})
-		return
+		return nil, err
 	}
-	if e != nil {
-		_ = s.op(r.Context(), "sync", e, "")
-		writeJSON(w, 200, e)
-		return
+	defer rows.Close()
+
+	owned := make(map[string]struct{}, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		owned[id] = struct{}{}
 	}
-	exists, _ := s.redis.Exists(r.Context(), "callback:event:deleted:"+id).Result()
-	if exists > 0 {
-		http.NotFound(w, r)
-		return
-	}
+	return owned, rows.Err()
+}
+
+func (s *EventStore) eventForUser(
+	ctx context.Context,
+	id, userID string,
+) (*Event, bool, error) {
 	var dbEvent Event
 	var payload string
-	err = s.pg.QueryRow(r.Context(), `
+	err := s.pg.QueryRow(ctx, `
 		SELECT
-			"Id", event_type, payload::text,
+			"Id", user_id::text, event_type, payload::text,
 			COALESCE(source_id, ''), COALESCE(event_unique_hash, ''),
 			created_at, updated_at, deleted_at
 		FROM events
-		WHERE "Id" = $1
-	`, id).Scan(
+		WHERE "Id" = $1 AND user_id = $2
+	`, id, userID).Scan(
 		&dbEvent.ID,
+		&dbEvent.UserID,
 		&dbEvent.EventType,
 		&payload,
 		&dbEvent.SourceID,
@@ -446,24 +514,81 @@ func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
 		&dbEvent.UpdatedAt,
 		&dbEvent.DeletedAt,
 	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, nil
+	}
 	if err != nil {
+		return nil, false, err
+	}
+
+	deleted, err := s.redis.Exists(ctx, "callback:event:deleted:"+id).Result()
+	if err != nil {
+		return nil, false, err
+	}
+	if deleted > 0 {
+		return nil, false, nil
+	}
+
+	e, err := s.state(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if e == nil {
+		dbEvent.Payload = []byte(payload)
+		if err := s.saveState(ctx, dbEvent); err != nil {
+			return nil, false, err
+		}
+		return &dbEvent, true, nil
+	}
+	if e.UserID != "" && e.UserID != userID {
+		return nil, false, fmt.Errorf("event owner mismatch in Redis for %s", id)
+	}
+	if e.UserID == "" {
+		e.UserID = userID
+		if err := s.saveState(ctx, *e); err != nil {
+			return nil, false, err
+		}
+	}
+	return e, true, nil
+}
+
+// get returns an event from Redis or loads its snapshot from PostgreSQL.
+func (s *EventStore) get(w http.ResponseWriter, r *http.Request) {
+	userID, ok := eventRequestUserID(w, r)
+	if !ok {
+		return
+	}
+	e, found, err := s.eventForUser(r.Context(), r.PathValue("id"), userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	dbEvent.Payload = []byte(payload)
-	_ = s.saveState(r.Context(), dbEvent)
-	writeJSON(w, 200, dbEvent)
+	_ = s.op(r.Context(), "sync", e, "")
+	writeJSON(w, http.StatusOK, e)
 }
 
 // update changes an event and queues the snapshot update.
 func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
-	in, ok := decodeInput(w, r)
+	userID, ok := eventRequestUserID(w, r)
 	if !ok {
 		return
 	}
-	e, err := s.state(r.Context(), r.PathValue("id"))
-	if err != nil || e == nil {
+	e, found, err := s.eventForUser(r.Context(), r.PathValue("id"), userID)
+	if err != nil {
+		log.Printf("owned event lookup failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+	if !found {
 		http.NotFound(w, r)
+		return
+	}
+	in, ok := decodeInput(w, r)
+	if !ok {
 		return
 	}
 	var p map[string]json.RawMessage
@@ -487,12 +612,17 @@ func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
 
 // softDelete marks an event as deleted without removing it permanently.
 func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
-	e, err := s.state(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeJSON(w, 500, map[string]string{"error": "internal server error"})
+	userID, ok := eventRequestUserID(w, r)
+	if !ok {
 		return
 	}
-	if e == nil {
+	e, found, err := s.eventForUser(r.Context(), r.PathValue("id"), userID)
+	if err != nil {
+		log.Printf("owned event lookup failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
@@ -526,9 +656,18 @@ func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 
 // delete removes an event from Redis and queues its permanent deletion.
 func (s *EventStore) delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := eventRequestUserID(w, r)
+	if !ok {
+		return
+	}
 	id := r.PathValue("id")
-	e, err := s.state(r.Context(), id)
-	if err != nil || e == nil {
+	_, found, err := s.eventForUser(r.Context(), id, userID)
+	if err != nil {
+		log.Printf("owned event lookup failed: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
@@ -618,15 +757,31 @@ func (s *EventStore) persistEvent(ctx context.Context, m redis.XMessage) error {
 	if current == nil {
 		return nil
 	}
+	if current.UserID == "" {
+		current.UserID = queued.UserID
+		if current.UserID == "" {
+			if err := s.pg.QueryRow(ctx,
+				`SELECT user_id::text FROM events WHERE "Id" = $1`, current.ID,
+			).Scan(&current.UserID); err != nil {
+				return err
+			}
+		}
+		if err := s.saveState(ctx, *current); err != nil {
+			return err
+		}
+	}
 	_, err = s.pg.Exec(ctx, `
 		INSERT INTO events (
-			"Id", event_type, payload, source_id, event_unique_hash,
+			"Id", user_id, event_type, payload, source_id, event_unique_hash,
 			created_at, updated_at, deleted_at
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		SELECT $1, u.id, $3, $4, $5, $6, $7, $8, $9
+		FROM auth_users u
+		WHERE u.id = $2
 		ON CONFLICT ("Id") DO NOTHING
 	`,
 		current.ID,
+		current.UserID,
 		current.EventType,
 		current.Payload,
 		current.SourceID,
@@ -635,6 +790,14 @@ func (s *EventStore) persistEvent(ctx context.Context, m redis.XMessage) error {
 		current.UpdatedAt,
 		current.DeletedAt,
 	)
+	if isForeignKeyViolation(err) {
+		var ownerExists bool
+		if lookupErr := s.pg.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM auth_users WHERE id = $1)`, current.UserID).Scan(&ownerExists); lookupErr == nil && !ownerExists {
+			// Account deletion can race with a queued event snapshot. Treat a
+			// snapshot for a deleted owner as completed instead of retrying it.
+			return nil
+		}
+	}
 	return err
 }
 

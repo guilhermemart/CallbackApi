@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -41,6 +42,7 @@ type authContextKey struct{}
 
 type authService struct {
 	pool          *pgxpool.Pool
+	redis         *redis.Client
 	secureCookies bool
 }
 
@@ -140,6 +142,95 @@ func (a *authService) logout(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true, Secure: a.secureCookies, SameSite: http.SameSiteLaxMode,
 	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ToDo criar uma pagina no front pra deletar a conta do usuario, e depois de deletar a conta, redirecionar para a pagina de login
+func (a *authService) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	user, ok := r.Context().Value(authContextKey{}).(authUser)
+	if !ok || user.ID == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Authentication required."})
+		return
+	}
+
+	tx, err := a.pool.Begin(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+
+	var lockedID string
+	if err := tx.QueryRow(r.Context(), `SELECT id::text FROM auth_users WHERE id = $1 FOR UPDATE`, user.ID).Scan(&lockedID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+
+	rows, err := tx.Query(r.Context(), `
+		SELECT "Id"::text, COALESCE(source_id, '')
+		FROM events
+		WHERE user_id = $1
+	`, user.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+	var eventIDs, sourceIDs []string
+	for rows.Next() {
+		var eventID, sourceID string
+		if err := rows.Scan(&eventID, &sourceID); err != nil {
+			rows.Close()
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+			return
+		}
+		eventIDs = append(eventIDs, eventID)
+		if sourceID != "" {
+			sourceIDs = append(sourceIDs, sourceID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+	rows.Close()
+
+	if _, err := tx.Exec(r.Context(), `DELETE FROM events WHERE user_id = $1`, user.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `DELETE FROM auth_users WHERE id = $1`, user.ID); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name: sessionCookieName, Value: "", Path: "/v1", MaxAge: -1,
+		HttpOnly: true, Secure: a.secureCookies, SameSite: http.SameSiteLaxMode,
+	})
+	if err := a.clearAccountEventCache(r.Context(), user.ID, eventIDs, sourceIDs); err != nil {
+		// The account and its database events are already deleted. Report the
+		// cache cleanup failure so operators can investigate stale Redis data.
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Account deleted, but event cache cleanup failed."})
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *authService) clearAccountEventCache(ctx context.Context, userID string, eventIDs, sourceIDs []string) error {
+	pipe := a.redis.TxPipeline()
+	for _, id := range eventIDs {
+		pipe.Del(ctx, "callback:event:"+id, "callback:event:deleted:"+id)
+		pipe.ZRem(ctx, indexKey, id)
+	}
+	for _, sourceID := range sourceIDs {
+		pipe.Del(ctx, recentHashKey(userID, sourceID))
+	}
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 func (a *authService) requireSession(next http.Handler) http.Handler {
@@ -242,4 +333,9 @@ func verifyPassword(password, encoded string) bool {
 func isUniqueViolation(err error) bool {
 	var pgErr interface{ SQLState() string }
 	return errors.As(err, &pgErr) && pgErr.SQLState() == "23505"
+}
+
+func isForeignKeyViolation(err error) bool {
+	var pgErr interface{ SQLState() string }
+	return errors.As(err, &pgErr) && pgErr.SQLState() == "23503"
 }

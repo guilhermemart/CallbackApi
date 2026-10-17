@@ -28,14 +28,14 @@ Campos obrigatórios definidos neste contrato: `event_type`, `event_unique_hash`
 `payload`, `payload.source`, `payload.source_id`, `payload.data`,
 `payload.created_at` e `payload.created_by`. Em eventos ativos, `payload.deleted_at` e
 `payload.deleted_by` podem ser nulos. Na exclusão lógica, a API preenche
-`payload.deleted_at` com o horário UTC e `payload.deleted_by` com `"system_action"`
-enquanto não existe autenticação. Repetir a solicitação de exclusão lógica de um
+`payload.deleted_at` com o horário UTC e `payload.deleted_by` com `"system_action"`.
+Repetir a solicitação de exclusão lógica de um
 evento já excluído retorna `200 OK` com uma mensagem informativa, sem enfileirar
 outra operação no banco.
 
 Na criação, a API consulta primeiro no Redis os hashes dos dez eventos mais
-recentemente aceitos para o mesmo `payload.source_id`. Uma correspondência
+recentemente aceitos para a mesma conta e `payload.source_id`. Uma correspondência
 responde `409 Conflict` e não enfileira o evento. PostgreSQL também impõe
-unicidade permanente ao par (`source_id`, `event_unique_hash`), cobrindo hashes
-fora dessa janela e requisições concorrentes. O emissor deve reutilizar o mesmo
-hash ao repetir o envio do mesmo evento.
+unicidade permanente à tupla (`user_id`, `source_id`, `event_unique_hash`), cobrindo
+hashes fora dessa janela e requisições concorrentes. O emissor deve reutilizar o
+mesmo hash ao repetir o envio do mesmo evento.

@@ -114,13 +114,26 @@ paths:
       responses:
         '204':
           description: Session ended and cookie cleared
+  /v1/auth/account:
+    delete:
+      tags: [Authentication]
+      summary: Delete the authenticated account and its events
+      security:
+        - SessionCookie: []
+      responses:
+        '204':
+          description: Account, sessions, and owned events deleted; cookie cleared
+        '401':
+          description: Authentication required
+        '500':
+          description: Account deleted, but event cache cleanup failed
   /v1/event/save:
     post:
       tags: [Events]
-      summary: Validate, deduplicate, and queue an event
+      summary: Validate, deduplicate, and queue an event for the current account
       security:
         - SessionCookie: []
-      description: Checks the ten most recently accepted hashes for this source in Redis, then uses PostgreSQL's permanent unique constraint as the authoritative duplicate check.
+      description: Associates the event with the authenticated account. Checks the ten most recently accepted hashes for this account and source in Redis, then uses PostgreSQL's permanent per-account unique index as the authoritative duplicate check.
       requestBody:
         required: true
         content:
@@ -137,7 +150,9 @@ paths:
         '400':
           description: Request body or event fields are invalid
         '409':
-          description: Hash was already used for this source
+          description: Hash was already used for this account and source
+        '401':
+          description: Authentication required
         '503':
           description: Redis deduplication check is unavailable
         '500':
@@ -145,22 +160,24 @@ paths:
   /v1/events/list:
     get:
       tags: [Events]
-      summary: List up to 100 active events
+      summary: List up to 100 active events belonging to the current account
       security:
         - SessionCookie: []
       responses:
         '200':
-          description: Events ordered by payload created_at, newest first
+          description: The current account's events ordered by payload created_at, newest first
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Event'
+        '401':
+          description: Authentication required
   /v1/event/get/{id}:
     get:
       tags: [Events]
-      summary: Get an event by ID
+      summary: Get an event by ID if it belongs to the current account
       security:
         - SessionCookie: []
       parameters:
@@ -173,11 +190,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/Event'
         '404':
-          description: Event not found
+          description: Event not found or owned by another account
+        '401':
+          description: Authentication required
   /v1/event/update/{id}:
     post:
       tags: [Events]
-      summary: Update an event
+      summary: Update an event owned by the current account
       security:
         - SessionCookie: []
       parameters:
@@ -194,11 +213,13 @@ paths:
         '400':
           description: Request body or event fields are invalid
         '404':
-          description: Event not found
+          description: Event not found or owned by another account
+        '401':
+          description: Authentication required
   /v1/events/softdelete/{id}:
     patch:
       tags: [Events]
-      summary: Soft delete an event
+      summary: Soft delete an event owned by the current account
       security:
         - SessionCookie: []
       parameters:
@@ -223,11 +244,13 @@ paths:
                     type: string
                     example: This event was already soft-deleted. No database operation was queued.
         '404':
-          description: Event not found
+          description: Event not found or owned by another account
+        '401':
+          description: Authentication required
   /v1/events/delete/{id}:
     delete:
       tags: [Events]
-      summary: Permanently delete an event
+      summary: Permanently delete an event owned by the current account
       security:
         - SessionCookie: []
       parameters:
@@ -236,7 +259,9 @@ paths:
         '202':
           description: Delete queued
         '404':
-          description: Event not found
+          description: Event not found or owned by another account
+        '401':
+          description: Authentication required
 components:
   securitySchemes:
     SessionCookie:
@@ -351,6 +376,10 @@ components:
         id:
           type: string
           format: uuid
+        userId:
+          type: string
+          format: uuid
+          description: ID of the account that owns this event
         eventType:
           type: string
         eventUniqueHash:

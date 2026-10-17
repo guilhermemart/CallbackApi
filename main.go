@@ -33,7 +33,7 @@ func main() {
 
 	store := &EventStore{redis: rdb, pg: pool}
 	go store.runWorker(ctx)
-	auth := &authService{pool: pool, secureCookies: strings.EqualFold(env("COOKIE_SECURE", "true"), "true")}
+	auth := &authService{pool: pool, redis: rdb, secureCookies: strings.EqualFold(env("COOKIE_SECURE", "true"), "true")}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /swagger", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/swagger/", http.StatusTemporaryRedirect)
@@ -79,6 +79,7 @@ func main() {
 	mux.HandleFunc("POST /v1/auth/login", auth.login)
 	mux.Handle("GET /v1/auth/me", auth.requireSession(http.HandlerFunc(auth.me)))
 	mux.HandleFunc("POST /v1/auth/logout", auth.logout)
+	mux.Handle("DELETE /v1/auth/account", auth.requireSession(http.HandlerFunc(auth.deleteAccount)))
 	mux.Handle("POST /v1/event/save", auth.requireSession(http.HandlerFunc(store.save)))
 	mux.Handle("GET /v1/events/list", auth.requireSession(http.HandlerFunc(store.list)))
 	mux.Handle("GET /v1/event/get/{id}", auth.requireSession(http.HandlerFunc(store.get)))
