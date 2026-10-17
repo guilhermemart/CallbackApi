@@ -140,6 +140,9 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 	); err != nil {
 		log.Printf("recent hash cache update failed for %s: %v", e.SourceID, err)
 	}
+	if err := publishNewEvent(r.Context(), s.redis, e); err != nil {
+		log.Printf("event notification publish failed for %s: %v", e.ID, err)
+	}
 	w.Header().Set("Location", "/v1/events/"+e.ID)
 	writeJSON(w, 202, map[string]any{
 		"id":                e.ID,
@@ -606,6 +609,9 @@ func (s *EventStore) update(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "internal server error"})
 		return
 	}
+	if err := publishEventNotification(r.Context(), s.redis, userID, "event_updated", e); err != nil {
+		log.Printf("event update notification publish failed for %s: %v", e.ID, err)
+	}
 	w.Header().Set("Location", "/v1/events/"+e.ID)
 	w.WriteHeader(202)
 }
@@ -651,6 +657,9 @@ func (s *EventStore) softDelete(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]string{"error": "internal server error"})
 		return
 	}
+	if err := publishEventNotification(r.Context(), s.redis, userID, "event_soft_deleted", e); err != nil {
+		log.Printf("event soft-delete notification publish failed for %s: %v", e.ID, err)
+	}
 	w.WriteHeader(202)
 }
 
@@ -661,7 +670,7 @@ func (s *EventStore) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	_, found, err := s.eventForUser(r.Context(), id, userID)
+	e, found, err := s.eventForUser(r.Context(), id, userID)
 	if err != nil {
 		log.Printf("owned event lookup failed: %v", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
@@ -682,6 +691,9 @@ func (s *EventStore) delete(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, 500, map[string]string{"error": "internal server error"})
 		return
+	}
+	if err := publishEventNotification(r.Context(), s.redis, userID, "event_deleted", map[string]string{"id": e.ID}); err != nil {
+		log.Printf("event delete notification publish failed for %s: %v", id, err)
 	}
 	w.WriteHeader(202)
 }

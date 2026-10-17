@@ -144,11 +144,35 @@ func (a *authService) logout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// ToDo criar uma pagina no front pra deletar a conta do usuario, e depois de deletar a conta, redirecionar para a pagina de login
 func (a *authService) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	user, ok := r.Context().Value(authContextKey{}).(authUser)
 	if !ok || user.ID == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Authentication required."})
+		return
+	}
+	var input struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeJSON(r, &input); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body."})
+		return
+	}
+	email, err := normalizeEmail(input.Email)
+	if err != nil || len(input.Password) == 0 || len(input.Password) > passwordMaxBytes {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid email or password."})
+		return
+	}
+	var accountEmail, encodedHash string
+	err = a.pool.QueryRow(r.Context(),
+		`SELECT email, password_hash FROM auth_users WHERE id = $1`, user.ID,
+	).Scan(&accountEmail, &encodedHash)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && (email != accountEmail || !verifyPassword(input.Password, encodedHash)) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Invalid email or password."})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "Could not delete account."})
 		return
 	}
 

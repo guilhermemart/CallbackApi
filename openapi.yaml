@@ -120,11 +120,19 @@ paths:
       summary: Delete the authenticated account and its events
       security:
         - SessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
       responses:
         '204':
-          description: Account, sessions, and owned events deleted; cookie cleared
+          description: Account, sessions, and owned events deleted after credential confirmation; cookie cleared
+        '400':
+          description: Invalid request body
         '401':
-          description: Authentication required
+          description: Authentication required or invalid email/password
         '500':
           description: Account deleted, but event cache cleanup failed
   /v1/event/save:
@@ -174,6 +182,39 @@ paths:
                   $ref: '#/components/schemas/Event'
         '401':
           description: Authentication required
+  /v1/events/stream:
+    get:
+      tags: [Events]
+      summary: Stream event changes for the current account using Server-Sent Events
+      description: Sends ready on connection, then new_event, event_updated, event_soft_deleted, and event_deleted notifications. The first three contain the event JSON; event_deleted contains the event ID. The stream uses the authenticated session cookie.
+      security:
+        - SessionCookie: []
+      responses:
+        '200':
+          description: Authenticated event notification stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |-
+                event: ready
+                data: {}
+
+                event: new_event
+                data: {"id":"...","eventType":"motion_detected"}
+
+                event: event_updated
+                data: {"id":"...","eventType":"motion_detected"}
+
+                event: event_soft_deleted
+                data: {"id":"...","deletedAt":"..."}
+
+                event: event_deleted
+                data: {"id":"..."}
+        '401':
+          description: Authentication required
+        '503':
+          description: Event stream is unavailable
   /v1/event/get/{id}:
     get:
       tags: [Events]

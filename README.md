@@ -13,10 +13,10 @@ the event in a Redis queue. A worker writes the snapshot to PostgreSQL.
 The main screen in the React interface should show events in a table, with the newest
 first according to the time the API received each event. Communication between the
 browser and API is direct: HTTP to query and manage events, and Server-Sent Events (SSE)
-to receive notifications about new events.
+to receive notifications about event creation, updates, and deletion.
 
-> The React dashboard and event table are in the sibling `CallbackFrontEnd` project. The
-> SSE endpoint and ordering by server receipt time remain future work in the API.
+> The React dashboard and event table are in the sibling `CallbackFrontEnd` project.
+> Ordering by server receipt time remains future work in the API.
 
 ## Current status
 
@@ -24,6 +24,7 @@ to receive notifications about new events.
 - Redis for current state and stream-based queues.
 - Worker that persists snapshots to PostgreSQL.
 - Health/readiness, create, query, update, and delete routes for events.
+- Account-authenticated Server-Sent Events (SSE) notifications for event creation, updates, and deletion.
 - Email/password registration and sign-in with server-side sessions. Event routes
   require an authenticated session.
 - Each event belongs to its creating account. Listing, retrieval, updates, and deletion
@@ -125,10 +126,11 @@ files.
 | `POST` | `/v1/auth/login` | Signs in and starts a session. |
 | `GET` | `/v1/auth/me` | Returns the current authenticated account. |
 | `POST` | `/v1/auth/logout` | Ends the current session. |
-| `DELETE` | `/v1/auth/account` | Deletes the authenticated account and its events. |
+| `DELETE` | `/v1/auth/account` | Deletes the authenticated account and its events after confirming the account email and password. |
 | `GET` | `/swagger/` | Opens the interactive Swagger UI. |
 | `GET` | `/openapi.yaml` | Returns the OpenAPI specification. |
 | `POST` | `/v1/event/save` | Creates an event owned by the authenticated account. |
+| `GET` | `/v1/events/stream` | Streams event creation, update, and deletion notifications for the account (SSE). |
 | `GET` | `/v1/events/list` | Lists up to 100 active events owned by the account. |
 | `GET` | `/v1/event/get/{id}` | Retrieves an event only if owned by the account. |
 | `POST` | `/v1/event/update/{id}` | Updates an event only if owned by the account. |
@@ -176,7 +178,6 @@ go test ./...
 
 ## Recommended next steps
 
-- Add SSE to the Go API and consume the stream in React.
 - Record the server-side receipt time and sort by it, newest to oldest.
 - Add password reset and email verification.
 - Define source-specific authorization, pagination, and processing monitoring.
@@ -201,11 +202,10 @@ Na interface React, a tela principal deverá apresentar os eventos em uma
 tabela, com os mais recentes primeiro segundo o horário em que a API recebeu
 cada evento. A comunicação entre o navegador e a API será direta: HTTP para
 consultar e gerenciar eventos e Server-Sent Events (SSE) para receber avisos de
-novos eventos.
+criação, atualização e exclusão de eventos.
 
 > O dashboard React e a tabela de eventos estão no projeto irmão
-> `CallbackFrontEnd`. O endpoint SSE e a ordenação pelo horário de recebimento
-> gerado no servidor ainda são trabalhos futuros na API.
+> `CallbackFrontEnd`. A ordenação pelo horário de recebimento gerado no servidor ainda é um trabalho futuro na API.
 
 ## Estado atual
 
@@ -214,6 +214,7 @@ novos eventos.
 - Worker que persiste snapshots no PostgreSQL.
 - Rotas de health/readiness, criação, consulta, atualização e exclusão de
   eventos.
+- Notificações Server-Sent Events (SSE) autenticadas para criação, atualização e exclusão de eventos.
 - Cadastro e login com email e senha, usando sessões gerenciadas pela API. As
   rotas de eventos exigem uma sessão autenticada.
 - Cada evento pertence à conta que o criou. Listagem, consulta, atualização e exclusão
@@ -317,10 +318,11 @@ definidas em arquivos SQL versionados.
 | `POST` | `/v1/auth/login` | Inicia uma sessão para a conta. |
 | `GET` | `/v1/auth/me` | Retorna a conta autenticada atual. |
 | `POST` | `/v1/auth/logout` | Encerra a sessão atual. |
-| `DELETE` | `/v1/auth/account` | Exclui a conta autenticada e seus eventos. |
+| `DELETE` | `/v1/auth/account` | Exclui a conta autenticada e seus eventos após confirmar o email e a senha da conta. |
 | `GET` | `/swagger/` | Abre a interface interativa Swagger UI. |
 | `GET` | `/openapi.yaml` | Retorna a especificação OpenAPI. |
 | `POST` | `/v1/event/save` | Cria um evento para a conta autenticada. |
+| `GET` | `/v1/events/stream` | Envia notificações de criação, atualização e exclusão de eventos da conta por SSE. |
 | `GET` | `/v1/events/list` | Lista até 100 eventos ativos da conta autenticada. |
 | `GET` | `/v1/event/get/{id}` | Consulta somente eventos pertencentes à conta. |
 | `POST` | `/v1/event/update/{id}` | Atualiza somente eventos pertencentes à conta. |
@@ -368,7 +370,6 @@ go test ./...
 
 ## Próximas etapas recomendadas
 
-- Adicionar SSE na API Go e consumir o stream no React.
 - Registrar o horário de recebimento no servidor e ordenar por ele, do mais
   recente para o mais antigo.
 - Definir autenticação das origens, paginação e monitoramento do processamento.

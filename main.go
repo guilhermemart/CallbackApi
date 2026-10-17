@@ -81,6 +81,7 @@ func main() {
 	mux.HandleFunc("POST /v1/auth/logout", auth.logout)
 	mux.Handle("DELETE /v1/auth/account", auth.requireSession(http.HandlerFunc(auth.deleteAccount)))
 	mux.Handle("POST /v1/event/save", auth.requireSession(http.HandlerFunc(store.save)))
+	mux.Handle("GET /v1/events/stream", auth.requireSession(http.HandlerFunc(store.stream)))
 	mux.Handle("GET /v1/events/list", auth.requireSession(http.HandlerFunc(store.list)))
 	mux.Handle("GET /v1/event/get/{id}", auth.requireSession(http.HandlerFunc(store.get)))
 	mux.Handle("POST /v1/event/update/{id}", auth.requireSession(http.HandlerFunc(store.update)))
@@ -165,6 +166,13 @@ type statusWriter struct {
 func (w *statusWriter) WriteHeader(s int) {
 	w.status = s
 	w.ResponseWriter.WriteHeader(s)
+}
+
+// Flush forwards streaming writes through the response status wrapper.
+func (w *statusWriter) Flush() {
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 // recoverer converts panics in downstream handlers into HTTP 500 responses.
