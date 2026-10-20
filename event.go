@@ -116,6 +116,7 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{
 			"title":  "Duplicate event detected",
 			"status": 409,
+			"code":   "duplicate_event",
 			"detail": "event_unique_hash appears in the ten most recent events " +
 				"for this source_id.",
 		})
@@ -130,6 +131,7 @@ func (s *EventStore) save(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 409, map[string]any{
 			"title":  "Duplicate event detected",
 			"status": 409,
+			"code":   "duplicate_event",
 			"detail": "event_unique_hash has already been used for this " +
 				"source_id.",
 		})
