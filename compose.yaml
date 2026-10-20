@@ -1,0 +1,100 @@
+name: callbackapi
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: callbackdb
+      POSTGRES_USER: callback
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U callback -d callbackdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - backend
+
+  redis:
+    build:
+      context: ./docker/redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks:
+      - backend
+
+  migrations:
+    build:
+      context: .
+      dockerfile: docker/callBackApi/Dockerfile
+    entrypoint: ["tern"]
+    command: ["migrate", "--migrations", "/app/migrations"]
+    restart: "no"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: callbackdb
+      POSTGRES_USER: callback
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_SSLMODE: disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backend
+
+  callback-api:
+    build:
+      context: .
+      dockerfile: docker/callBackApi/Dockerfile
+    restart: unless-stopped
+    environment:
+      HTTP_ADDRESS: :8080
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: callbackdb
+      POSTGRES_USER: callback
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_SSLMODE: disable
+      REDIS_ADDRESS: redis:6379
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrations:
+        condition: service_completed_successfully
+    networks:
+      - backend
+
+  frontend:
+    build:
+      context: ../CallbackFrontEnd
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      API_UPSTREAM: http://callback-api:8080
+    depends_on:
+      - callback-api
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    networks:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  backend:
+    driver: bridge

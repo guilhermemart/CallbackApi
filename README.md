@@ -4,6 +4,51 @@ Go API for receiving callbacks from devices and systems, validating events, and 
 them available for querying and management. The project also includes a React web
 interface connected directly to the Go API.
 
+## Run the full stack with Docker Compose
+
+From this repository, create a local environment file and replace its database
+password before starting the stack:
+
+```powershell
+Copy-Item .env.example .env
+# Edit .env and set a long, unique POSTGRES_PASSWORD.
+docker compose up --build -d
+```
+
+Compose builds the API and sibling frontend images, starts PostgreSQL and Redis
+with persistent volumes, applies pending Tern migrations, then starts the API
+and frontend. Open `http://localhost:8080`. The API and database ports are not
+published on the host; the frontend proxies `/v1` requests to the API.
+
+For local HTTP, `COOKIE_SECURE=false` is set by default. Before exposing the
+stack to the internet, configure HTTPS in front of the frontend and set
+`COOKIE_SECURE=true` in `.env`. To inspect logs or stop the stack, run
+`docker compose logs -f` or `docker compose down`. `docker compose down -v`
+also removes the PostgreSQL and Redis data volumes.
+
+For a public VM deployment, set `PUBLIC_IP` in `.env` to the VM's public IP.
+Caddy requests a short-lived HTTPS certificate for the IP address, and the
+production overlay enables secure session cookies:
+
+```powershell
+docker compose -f compose.yaml -f compose.production.yaml up --build -d
+```
+
+The `deploy-gcp.ps1` script creates a small Compute Engine VM, a private VPC,
+and firewall rules for HTTPS and IAP-only SSH. Its startup script installs
+Docker, clones the API and frontend repositories, creates a random database
+password on the VM, and starts the production Compose stack. Run it after
+authenticating with `gcloud auth login`:
+
+```powershell
+./deploy-gcp.ps1 -ProjectId callback-api-production
+```
+
+The script targets `us-central1-a` with an `e2-micro` VM and a 30 GB standard
+disk. The VM incurs any charges that apply to the selected GCP account and
+resources. To connect later, use `gcloud compute ssh callback-api-prod
+--zone=us-central1-a --tunnel-through-iap --project=callback-api-production`.
+
 ## Intended outcome
 
 The system should let a source send an event and receive confirmation that it was
