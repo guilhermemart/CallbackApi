@@ -17,19 +17,24 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker
 
 install -d -m 0755 /opt/callbackapi /opt/CallbackFrontEnd
-git clone --depth 1 --branch main https://github.com/guilhermemart/CallbackApi.git /opt/callbackapi
-git clone --depth 1 --branch main https://github.com/guilhermemart/CallbackFrontEnd.git /opt/CallbackFrontEnd
 
-public_ip="$(curl -fsS -H 'Metadata-Flavor: Google' \
-  http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)"
-postgres_password="$(openssl rand -hex 32)"
-umask 077
-cat > /opt/callbackapi/.env <<EOF
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+fi
+swapon /swapfile || true
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+if [ ! -f /opt/callbackapi/.env ]; then
+  public_ip="$(curl -fsS -H 'Metadata-Flavor: Google' \
+    http://metadata.google.internal/computeMetadata/v1/instance/network-interfaces/0/access-configs/0/external-ip)"
+  postgres_password="$(openssl rand -hex 32)"
+  umask 077
+  cat > /opt/callbackapi/.env <<EOF
 POSTGRES_PASSWORD=${postgres_password}
 COOKIE_SECURE=true
 FRONTEND_PORT=127.0.0.1:8080
 PUBLIC_IP=${public_ip}
 EOF
-
-cd /opt/callbackapi
-docker compose --env-file .env -f compose.yaml -f compose.production.yaml up --build -d
+fi
